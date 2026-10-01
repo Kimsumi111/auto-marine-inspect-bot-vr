@@ -104,3 +104,13 @@ InitTestScene*.unity*
 
 # Auto-generated cache in Assets folder
 /[Aa]ssets/[Ss]ceneDependencyCache*
+
+# Hand-authored dashboard projects (not Unity-generated projects).
+!gui/**/*.csproj
+gui/**/bin/
+gui/**/obj/
+.venv-diagnosis/
+tools/diagnosis/__pycache__/
+.venv-speech/
+tools/voice/models/
+tools/voice/__pycache__/
