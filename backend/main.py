@@ -17,7 +17,9 @@ def create_app(db_path=None, link=None, diagnosis=None, *, model=None, enable_ag
     @asynccontextmanager
     async def lifespan(app):
         storage = Storage(db_path or os.environ.get("MARINE_DB", str(Path(__file__).parent / "runtime" / "missions.sqlite3")))
-        unity = link or UnityLink(port=int(os.environ.get("MARINE_UNITY_PORT", "8765")))
+        port_file = Path(__file__).resolve().parents[1] / ".unity-tcp-port"
+        local_port = port_file.read_text().strip() if port_file.is_file() else "8765"
+        unity = link or UnityLink(port=int(os.environ.get("MARINE_UNITY_PORT", local_port)))
         service = MissionService(storage, unity, diagnosis=diagnosis or DiagnosisRunner())
         mode = ("openai" if enable_agent else "fixed_ab") if enable_agent is not None else os.getenv("MARINE_AGENT_MODE", "openai")
         if mode not in {"openai", "fixed_ab"}:
@@ -81,6 +83,7 @@ def create_app(db_path=None, link=None, diagnosis=None, *, model=None, enable_ag
     async def health():
         unity = app.state.unity
         return dict(api_version=1, service="metamarine-backend", ready=True, transport_mode="backend",
+                    unity_port=getattr(unity, "port", None),
                     unity_connected=unity.fresh, unity_can_start=bool(unity.fresh and unity.latest["canStart"]),
                     agent_mode=app.state.service.agent_mode, agent_ready=app.state.service.agent is not None, diagnosis_enabled=True,
                     diagnosis_python_available=app.state.service.diagnosis.python.is_file() if isinstance(app.state.service.diagnosis, DiagnosisRunner) else True)

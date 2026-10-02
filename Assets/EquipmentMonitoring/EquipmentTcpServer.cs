@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -11,6 +12,16 @@ namespace ShipRobot.EquipmentMonitoring
     // Loopback-only, one client. All socket work stays off Unity's main thread.
     public sealed class EquipmentTcpServer : IDisposable
     {
+        private static readonly object serversGate = new object();
+        private static readonly HashSet<EquipmentTcpServer> servers = new HashSet<EquipmentTcpServer>();
+
+        // Editor calls this before Play exits or assemblies reload, while references still exist.
+        public static void DisposeAll()
+        {
+            EquipmentTcpServer[] snapshot;
+            lock (serversGate) { snapshot = new EquipmentTcpServer[servers.Count]; servers.CopyTo(snapshot); }
+            foreach (var server in snapshot) server.Dispose();
+        }
         private sealed class Connection
         {
             public long Id;
@@ -28,6 +39,7 @@ namespace ShipRobot.EquipmentMonitoring
         private string latest;
         private long nextId;
         public int Port { get; private set; }
+        public bool IsRunning => running;
         public bool Connected { get { lock (gate) return active != null && active.Alive; } }
         public string LastError { get; private set; } = "";
         public void Start(int port)
@@ -35,6 +47,7 @@ namespace ShipRobot.EquipmentMonitoring
             if (running) throw new InvalidOperationException("Already listening");
             listener = new TcpListener(IPAddress.Loopback, port);
             listener.Start(1); Port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            lock (serversGate) servers.Add(this);
             running = true;
             acceptThread = new Thread(AcceptLoop) { IsBackground = true, Name = "Equipment TCP accept" };
             acceptThread.Start();
@@ -124,6 +137,7 @@ namespace ShipRobot.EquipmentMonitoring
             lock (gate) if (active != null) Close(active);
             acceptThread?.Join(500);
             while (requests.TryDequeue(out _)) { }
+            lock (serversGate) servers.Remove(this);
         }
     }
 }

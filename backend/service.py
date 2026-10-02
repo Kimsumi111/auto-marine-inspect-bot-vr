@@ -37,6 +37,8 @@ class MissionService:
         job.setdefault("agent_events", []).append(dict(at=now(), kind=kind, data=copy.deepcopy(data)))
         self.storage.save(job)
 
+        self.storage.audit(job["snapshot"]["mission_id"], job["agent_events"][-1])
+
     def active(self, job):
         if job["snapshot"]["state"] in TERMINAL | {"CANCELLING"}:
             raise asyncio.CancelledError()
@@ -132,6 +134,7 @@ class MissionService:
         job["sent"] = True
         self.storage.save(job)  # Conservatively assume possible execution after this point.
         try:
+            self.event(job, "tool_started", dict(tool="start_inspection", command_id=job["start_command_id"]))
             ack = await self.link.command("mission_start", job["start_command_id"], job["snapshot"]["unity_session_id"])
             if job["snapshot"]["state"] not in {"PLANNING", "EXECUTING"}:
                 return
@@ -141,6 +144,7 @@ class MissionService:
             else:
                 self.touch(job, state="EXECUTING", step="mission_start_ack", message="시작 명령 적용됨 · 실제 점검 이벤트 대기")
         except (OSError, asyncio.TimeoutError):
+            self.event(job, "tool_failed", dict(tool="start_inspection", error_type="ack_unconfirmed"))
             if job["snapshot"]["state"] in {"PLANNING", "EXECUTING"}:
                 self.finish(job, "FAILED", "시작 명령 처리 여부 미확인 · 자동 재전송하지 않습니다. 취소로 정지를 확인하세요.", attention=True)
 
@@ -168,7 +172,9 @@ class MissionService:
     async def stop(self, job):
         command_id = job["stop_command_id"]
         try:
+            self.event(job, "tool_started", dict(tool="stop_inspection", command_id=command_id))
             ack = await self.link.command("mission_stop", command_id, job["snapshot"]["unity_session_id"])
+            self.event(job, "tool_result", dict(tool="stop_inspection", command_id=command_id, acknowledged=ack.get("ok") is True))
             if job["snapshot"]["state"] != "CANCELLING" or job["stop_command_id"] != command_id:
                 return
             job["stop_ack"] = ack.get("ok") is True
@@ -180,7 +186,7 @@ class MissionService:
                 await self.on_frame(self.link.latest, self.link.sequence)
             await asyncio.sleep(5)
         except (OSError, asyncio.TimeoutError):
-            pass
+            self.event(job, "tool_failed", dict(tool="stop_inspection", error_type="ack_unconfirmed"))
         if job["snapshot"]["state"] == "CANCELLING" and job["stop_command_id"] == command_id:
             self.finish(job, "FAILED", "정지 미확인 · Unity 연결을 확인하고 취소를 다시 요청하세요.", attention=True)
 

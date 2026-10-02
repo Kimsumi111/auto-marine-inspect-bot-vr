@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using System.IO;
+using System.Globalization;
 using ShipRobot.LaneFollowing;
 using UnityEngine;
 using UnityEngine.Serialization;
@@ -26,7 +28,6 @@ namespace ShipRobot.Navigation
             [Min(0f)] public float approachDistance;
             [Range(0.05f, 1f)] public float approachCommand;
             [Range(0.05f, 1f)] public float searchTurnCommand;
-            [Range(0.05f, 1f)] public float visualAlignMoveCommand;
         }
 
         private enum ActiveMission { None, SingleEdge, Perimeter, EquipmentA, EquipmentAAndB }
@@ -62,26 +63,36 @@ namespace ShipRobot.Navigation
 
         [Header("Search for two exit boundaries")]
         [SerializeField, Range(0.05f, 1f)] private float searchTurnCommand = 0.20f;
+        [SerializeField, Range(0f, 1f)] private float exitSearchMoveCommand = 0.40f;
+        [SerializeField, Min(0f)] private float maximumExitSearchAdvanceDistance = 0.60f;
         [SerializeField, Range(0f, 90f)] private float minimumTurnBeforePair = 10f;
         [SerializeField, Range(45f, 175f)] private float maximumSearchTurn = 150f;
         [SerializeField, Range(5f, 90f)] private float exitHeadingTolerance = 35f;
         [SerializeField, Min(0.1f)] private float maximumExitLaneProbeDistance = 1.2f;
         [SerializeField, Range(0.05f, 1f)] private float exitLaneProbeCommand = 0.10f;
         [SerializeField, Range(0f, 1f)] private float minimumPairConfidence = 0.10f;
-        [SerializeField, Min(1)] private int requiredPairFrames = 1;
+        [SerializeField, Min(1)] private int requiredPairFrames = 3;
 
         [Header("Virtual centre-line alignment")]
-        [SerializeField, Range(0.05f, 1f)] private float visualAlignMoveCommand = 0.11f;
-        [SerializeField, Min(0f)] private float visualLateralGain = 0.50f;
-        [SerializeField, Min(0f)] private float visualHeadingGain = 0.42f;
-        [SerializeField, Range(0.05f, 1f)] private float maximumVisualTurn = 0.22f;
+        [SerializeField, Min(0f)] private float visualLateralGain = 0.80f;
+        [SerializeField, Min(0f)] private float visualHeadingGain = 0.70f;
+        [SerializeField, Range(0.05f, 1f)] private float maximumVisualTurn = 0.40f;
         [SerializeField, Range(0f, 1f)] private float alignedLateralTolerance = 0.35f;
         [SerializeField, Range(0f, 1f)] private float alignedHeadingTolerance = 0.40f;
+        [SerializeField, Range(0f, 1f)] private float boundaryAlignmentLateralTolerance = 0.08f;
+        [SerializeField, Range(0f, 45f)] private float boundaryAlignmentAngleTolerance = 8f;
+        [SerializeField, Range(0f, 1f)] private float boundaryAlignMoveCommand = 0.40f;
+        [SerializeField, Range(0f, 1f)] private float partialAlignMoveCommand = 0.10f;
+        [SerializeField, Range(0f, 1f)] private float maximumPartialAlignTurn = 0.20f;
+        [SerializeField, Min(0f)] private float maximumPartialAlignTravel = 0.20f;
+        [SerializeField, Min(0.1f)] private float alignmentObservationTimeout = 0.80f;
+        [SerializeField, Min(0.1f)] private float maximumPartialAlignSeconds = 6f;
+        [SerializeField, Min(1)] private int requiredPartialAlignedFrames = 3;
+        [SerializeField, Range(5f, 45f)] private float alignmentExitHeadingTolerance = 15f;
         [SerializeField, Min(1)] private int requiredAlignedFrames = 2;
         [SerializeField, Min(0f)] private float minimumAlignTravel = 0.05f;
         [SerializeField, Min(0.1f)] private float maximumAlignTravel = 1.50f;
         [SerializeField, Min(1)] private int pairLostFrameLimit = 12;
-        [SerializeField, Min(0)] private int maximumExitLaneRecoveryAttempts = 2;
         [SerializeField] private ManeuverOverride[] maneuverOverrides;
 
         [Header("Straight junction traversal")]
@@ -148,8 +159,14 @@ namespace ShipRobot.Navigation
         private int sideLossFrames;
         private int pairFrames;
         private int alignedFrames;
+        private readonly FreshDetectionStreak exitPairStreak = new FreshDetectionStreak();
+        private readonly FreshDetectionStreak alignmentStreak = new FreshDetectionStreak();
+        private readonly FreshDetectionStreak alignmentLossStreak = new FreshDetectionStreak();
+        private readonly FreshDetectionStreak partialAlignmentStreak = new FreshDetectionStreak();
+        private float partialAlignmentStarted = -1f;
+        private double lastAlignmentTimestamp = -1d;
+        private float lastAlignmentImageTime;
         private int pairLostFrames;
-        private int exitLaneRecoveryAttempts;
         private int normalLaneLostFrames;
         private int straightLossFrames;
         private int straightReacquireFrames;
@@ -157,9 +174,11 @@ namespace ShipRobot.Navigation
         private double lastSideObservationTimestamp = -1d;
         private double lastStraightObservationTimestamp = -1d;
         private float desiredExitYaw;
+        private HsvLaneDetector.TrackingReference alignmentReference;
         private float searchStartYaw;
         private float minimumSearchAngle;
         private Vector3 exitLaneProbeStartPosition;
+        private Vector3 exitSearchStartPosition;
         private bool exitLaneProbeStarted;
         private Vector3 motionStartPosition;
         private float fallbackStartTime;
@@ -167,11 +186,80 @@ namespace ShipRobot.Navigation
         private float activeMinimumApproachDistance;
         private float activeApproachCommand;
         private float activeSearchTurnCommand;
-        private float activeVisualMoveCommand;
         private int activeInspectionIndex;
         private float inspectionTimeRemaining;
         private Transform activeInspectionPoint;
         private string statusDetail = "Ready";
+        private NavigationCsvLog drivingLog;
+        private bool drivingLogFailed;
+        private float nextDrivingLogTime;
+        private string lastLoggedState;
+
+        private static string LogNumber(double value) => value.ToString("F4", CultureInfo.InvariantCulture);
+
+        private void LateUpdate()
+        {
+            string state = State.ToString();
+            bool changed = state != lastLoggedState;
+            if (changed || Time.time >= nextDrivingLogTime)
+                RecordDrivingLog(changed ? "state_change" : "sample");
+        }
+
+        private void RecordDrivingLog(string eventName)
+        {
+            if (drivingLogFailed || laneFollower == null) return;
+            try
+            {
+                if (drivingLog == null)
+                {
+                    string root = Application.isEditor ? Path.GetDirectoryName(Application.dataPath) : Application.persistentDataPath;
+                    string path = Path.Combine(root, "runtime", "navigation", "navigation-" +
+                        DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N").Substring(0, 8) + ".csv");
+                    drivingLog = new NavigationCsvLog(path, "utc", "simulation_time", "event", "source", "mission", "state",
+                        "route", "node", "target", "x", "y", "z", "yaw", "desired_yaw", "yaw_error",
+                        "reference", "lane_usable", "near_observed", "far_observed", "angle_valid", "angle_deg", "lateral", "confidence",
+                        "pair", "pair_confidence", "image_timestamp", "image_age", "manual_control", "manual_move_request",
+                        "manual_turn_request", "applied_move", "applied_turn", "drive_enabled", "safety_stop", "safety_scale",
+                        "avoidance_paused", "align_travel", "search_advance", "lost_images", "align_frames",
+                        "align_angle_gain", "align_lateral_gain", "align_turn_limit", "detail");
+                    Debug.Log($"Navigation driving log: {path}", this);
+                }
+                bool usable = laneFollower.TryGetLaneDetection(out HsvLaneDetector.Detection d);
+                Vector3 p = laneFollower.transform.position;
+                float yaw = laneFollower.transform.eulerAngles.y;
+                string target = targetRouteIndex >= 0 && targetRouteIndex < activeRoute.Count ? activeRoute[targetRouteIndex].ToString() : "";
+                drivingLog.Write(DateTime.UtcNow.ToString("O"), LogNumber(Time.time), eventName, "unity_simulation",
+                    activeMission.ToString(), State.ToString(), RouteText(), CurrentNode.ToString(), target,
+                    LogNumber(p.x), LogNumber(p.y), LogNumber(p.z), LogNumber(yaw), LogNumber(desiredExitYaw),
+                    LogNumber(Mathf.DeltaAngle(yaw, desiredExitYaw)), laneFollower.TrackingReferenceName, usable.ToString(), d.nearObserved.ToString(),
+                    d.farObserved.ToString(), d.hasLineAngle.ToString(), d.hasLineAngle ? LogNumber(d.lineAngleRadians * Mathf.Rad2Deg) : "",
+                    LogNumber(d.lateralError), LogNumber(d.confidence), d.hasBoundaryPair.ToString(), LogNumber(d.boundaryPairConfidence),
+                    LogNumber(d.timestamp), LogNumber(Time.timeAsDouble - d.timestamp), laneFollower.IsManualControl.ToString(),
+                    laneFollower.IsManualControl ? LogNumber(laneFollower.ManualMoveRequest) : "",
+                    laneFollower.IsManualControl ? LogNumber(laneFollower.ManualTurnRequest) : "",
+                    LogNumber(laneFollower.MoveCommand), LogNumber(laneFollower.TurnCommand), laneFollower.IsDriveEnabled.ToString(),
+                    laneFollower.IsSafetyStopped.ToString(), LogNumber(laneFollower.SafetySpeedScale), avoidancePaused.ToString(),
+                    LogNumber(PlanarDistance(motionStartPosition, p)), LogNumber(PlanarDistance(exitSearchStartPosition, p)),
+                    pairLostFrames.ToString(), alignedFrames.ToString(), LogNumber(visualHeadingGain), LogNumber(visualLateralGain),
+                    LogNumber(maximumVisualTurn), statusDetail);
+                lastLoggedState = State.ToString();
+                nextDrivingLogTime = Time.time + (State == MissionState.Idle || State == MissionState.Fault || State == MissionState.Completed ? 1f : 0.10f);
+            }
+            catch (Exception ex)
+            {
+                drivingLogFailed = true;
+                try { drivingLog?.Dispose(); } catch { }
+                drivingLog = null;
+                Debug.LogWarning($"Navigation driving log disabled: {ex.GetType().Name}", this);
+            }
+        }
+
+        private void OnDisable()
+        {
+            RecordDrivingLog("component_disabled");
+            try { drivingLog?.Dispose(); } catch (Exception ex) { Debug.LogWarning($"Navigation log close failed: {ex.GetType().Name}", this); }
+            drivingLog = null;
+        }
         private GUIStyle titleStyle;
         private GUIStyle statusStyle;
 
@@ -479,7 +567,11 @@ namespace ShipRobot.Navigation
             }
 
             ResolveManeuver(entry, CurrentNode, exit);
-            exitLaneRecoveryAttempts = 0;
+            // Use the route's turn direction, not the remaining heading error on a re-search.
+            TryCalculateEdgeYaw(entry, CurrentNode, out float incomingYaw);
+            alignmentReference = Mathf.DeltaAngle(incomingYaw, desiredExitYaw) < 0f
+                ? HsvLaneDetector.TrackingReference.RightBoundary
+                : HsvLaneDetector.TrackingReference.LeftBoundary;
             activeMinimumApproachDistance = arrivedAfterAvoidance
                 ? Mathf.Max(minimumApproachDistance,
                     Mathf.Min(postAvoidanceMinimumApproachDistance, activeApproachDistance - 0.1f))
@@ -553,12 +645,16 @@ namespace ShipRobot.Navigation
         private void BeginExitLaneSearch()
         {
             searchStartYaw = laneFollower.transform.eulerAngles.y;
+            exitSearchStartPosition = laneFollower.transform.position;
             float plannedAngle = Mathf.DeltaAngle(searchStartYaw, desiredExitYaw);
             minimumSearchAngle = Mathf.Min(minimumTurnBeforePair, Mathf.Abs(plannedAngle) * 0.45f);
             pairFrames = 0;
+            exitPairStreak.Reset();
             exitLaneProbeStarted = false;
             State = MissionState.SearchingExitLane;
-            laneFollower.SetManualCommand(0f, GetExitHeadingTurnCommand(plannedAngle));
+            Debug.Log($"Navigation transition: exit search node={CurrentNode}, target={activeRoute[targetRouteIndex]}, " +
+                      $"yaw={searchStartYaw:F1}, desiredYaw={desiredExitYaw:F1}, position={laneFollower.transform.position}", this);
+            laneFollower.SetManualCommand(GetExitSearchMoveCommand(), GetExitHeadingTurnCommand(plannedAngle));
         }
 
         private void UpdateExitLaneSearch()
@@ -566,19 +662,18 @@ namespace ShipRobot.Navigation
             float turned = Mathf.Abs(Mathf.DeltaAngle(searchStartYaw, laneFollower.transform.eulerAngles.y));
             if (turned > maximumSearchTurn)
             {
-                Fail($"No exit boundary pair within {maximumSearchTurn:F0} deg");
+                Fail($"No usable central exit lane within {maximumSearchTurn:F0} deg");
                 return;
             }
 
-            bool angleReady = turned >= minimumSearchAngle;
             float signedHeadingError = Mathf.DeltaAngle(
                 laneFollower.transform.eulerAngles.y, desiredExitYaw);
             float headingError = Mathf.Abs(signedHeadingError);
             bool headingReady = headingError <= Mathf.Min(exitHeadingTolerance, 12f);
-            bool pairUsable = laneFollower.TryGetBoundaryPair(
-                minimumPairConfidence, out HsvLaneDetector.Detection detection);
-            bool pairVisible = angleReady && headingReady && pairUsable;
-            pairFrames = pairVisible ? pairFrames + 1 : Mathf.Max(0, pairFrames - 1);
+            bool trackingUsable = laneFollower.TryGetLaneDetection(out HsvLaneDetector.Detection detection);
+            // Vision can hand over at any rotation angle, as soon as tracking can use it.
+            bool pairVisible = trackingUsable && laneFollower.TrackingReferenceName == HsvLaneDetector.TrackingReference.LaneCentre.ToString();
+            pairFrames = exitPairStreak.Observe(detection.timestamp, pairVisible);
             if (headingReady && !exitLaneProbeStarted)
             {
                 exitLaneProbeStarted = true;
@@ -591,29 +686,39 @@ namespace ShipRobot.Navigation
                 detection.boundaryPairConfidence, detection.confidence);
             statusDetail =
                 $"Search: angle {turned:F1}/{minimumSearchAngle:F1}, exit yaw error={headingError:F0} " +
-                $"ready={(angleReady && headingReady ? "YES" : "NO")}, " +
+                $"trackingReady={(pairVisible ? "YES" : "NO")}, trackingMin={laneFollower.EffectiveMinimumConfidence:F2}, " +
                 $"pair={(detection.hasBoundaryPair ? "YES" : "NO")}, conf={detection.confidence:F2}, " +
                 $"pairConf={detection.boundaryPairConfidence:F2}, effective={effectivePairConfidence:F2}, " +
-                $"stable={pairFrames}/{requiredPairFrames}, probe={probeDistance:F2}/{maximumExitLaneProbeDistance:F2} m";
+                $"searchAdvance={PlanarDistance(exitSearchStartPosition, laneFollower.transform.position):F2}/{maximumExitSearchAdvanceDistance:F2} m, " +
+                $"centralConfidenceStable={pairFrames}/{requiredPairFrames}, imageAge={Time.timeAsDouble - detection.timestamp:F2}s, " +
+                $"probe={probeDistance:F2}/{maximumExitLaneProbeDistance:F2} m";
 
             if (pairFrames >= requiredPairFrames)
             {
-                alignedFrames = 0;
-                pairLostFrames = 0;
-                motionStartPosition = laneFollower.transform.position;
-                State = MissionState.VisualAlign;
+                FinishAlignment("central lane confidence confirmed; boundary alignment skipped");
                 return;
             }
             if (probeDistance >= maximumExitLaneProbeDistance)
             {
-                Fail($"Exit lane not visible after {probeDistance:F2} m at the planned heading");
+                Fail($"Exit lane not visible after {probeDistance:F2} m at the planned heading; " +
+                     $"node={CurrentNode}, target={activeRoute[targetRouteIndex]}, " +
+                     $"yaw={laneFollower.transform.eulerAngles.y:F1}, desiredYaw={desiredExitYaw:F1}; " + statusDetail);
                 return;
             }
 
-            if (headingReady)
+            if (pairVisible)
+                laneFollower.SetManualCommand(0f, 0f); // Hold position while confirming new camera frames.
+            else if (headingReady)
                 laneFollower.SetManualCommand(exitLaneProbeCommand, 0f);
             else
-                laneFollower.SetManualCommand(0f, GetExitHeadingTurnCommand(signedHeadingError));
+                laneFollower.SetManualCommand(GetExitSearchMoveCommand(), GetExitHeadingTurnCommand(signedHeadingError));
+        }
+
+        private float GetExitSearchMoveCommand()
+        {
+            // Once the forward budget is used, finish the heading search by rotating in place.
+            return PlanarDistance(exitSearchStartPosition, laneFollower.transform.position) < maximumExitSearchAdvanceDistance
+                ? exitSearchMoveCommand : 0f;
         }
 
         private float GetExitHeadingTurnCommand(float headingError)
@@ -628,6 +733,7 @@ namespace ShipRobot.Navigation
 
         private void UpdateVisualAlignment()
         {
+            // Legacy state handler retained for compatibility. Current exit search bypasses VisualAlign.
             float travelled = PlanarDistance(motionStartPosition, laneFollower.transform.position);
             if (travelled > maximumAlignTravel)
             {
@@ -635,52 +741,109 @@ namespace ShipRobot.Navigation
                 return;
             }
 
-            if (!laneFollower.TryGetBoundaryPair(minimumPairConfidence, out HsvLaneDetector.Detection detection))
+            bool usable = laneFollower.TryGetLaneDetection(out HsvLaneDetector.Detection detection);
+            bool fresh = !double.IsNaN(detection.timestamp) && !double.IsInfinity(detection.timestamp) &&
+                         detection.timestamp > lastAlignmentTimestamp;
+            if (fresh)
             {
-                pairLostFrames++;
+                lastAlignmentTimestamp = detection.timestamp;
+                lastAlignmentImageTime = Time.time;
+            }
+            bool timedOut = Time.time - lastAlignmentImageTime > alignmentObservationTimeout;
+            float exitHeadingError = Mathf.DeltaAngle(laneFollower.transform.eulerAngles.y, desiredExitYaw);
+            bool exitHeadingReady = Mathf.Abs(exitHeadingError) <= alignmentExitHeadingTolerance;
+            if (!usable || !detection.hasLineAngle || timedOut)
+            {
                 alignedFrames = 0;
-                statusDetail = $"Boundary pair lost {pairLostFrames}/{pairLostFrameLimit}";
-                if (pairLostFrames > pairLostFrameLimit)
+                alignmentStreak.Reset();
+                bool partial = usable && !timedOut && !detection.hasLineAngle &&
+                               (detection.nearObserved || detection.farObserved);
+                if (partial)
                 {
-                    if (exitLaneRecoveryAttempts >= maximumExitLaneRecoveryAttempts)
+                    pairLostFrames = 0;
+                    alignmentLossStreak.Reset();
+                    if (partialAlignmentStarted < 0f) partialAlignmentStarted = Time.time;
+                    bool lateralAligned = exitHeadingReady && detection.nearObserved && travelled >= minimumAlignTravel &&
+                        Mathf.Abs(detection.lateralError) <= boundaryAlignmentLateralTolerance;
+                    alignedFrames = partialAlignmentStreak.Observe(detection.timestamp, lateralAligned);
+                    statusDetail = $"Partial align {alignmentReference}: near={detection.nearObserved}, far={detection.farObserved}, " +
+                        $"lateral={detection.lateralError:F2}/{boundaryAlignmentLateralTolerance:F2}, " +
+                        $"stable={alignedFrames}/{requiredPartialAlignedFrames}, travel={travelled:F2}/{maximumPartialAlignTravel:F2}, " +
+                        $"exitYawError={exitHeadingError:F1}/{alignmentExitHeadingTolerance:F1}, " +
+                        $"elapsed={Time.time - partialAlignmentStarted:F2}/{maximumPartialAlignSeconds:F2}";
+                    if (alignedFrames >= requiredPartialAlignedFrames)
                     {
-                        Fail($"Exit lane was not recovered after {exitLaneRecoveryAttempts} searches");
+                        FinishAlignment("partial lateral alignment and exit heading confirmed; angle unavailable");
                         return;
                     }
-                    exitLaneRecoveryAttempts++;
-                    BeginExitLaneSearch();
-                    statusDetail = $"Re-searching exit lane ({exitLaneRecoveryAttempts}/{maximumExitLaneRecoveryAttempts})";
+                    if (Time.time - partialAlignmentStarted >= maximumPartialAlignSeconds)
+                    {
+                        Fail($"Partial alignment lateral tolerance not reached; {statusDetail}");
+                        return;
+                    }
+                    float partialTurn = lateralAligned ? 0f : BoundaryAlignmentControl.ExitHeadingTurn(
+                        exitHeadingError, maximumPartialAlignTurn);
+                    float partialMove = !lateralAligned && travelled < maximumPartialAlignTravel ? partialAlignMoveCommand : 0f;
+                    laneFollower.SetManualCommand(partialMove, partialTurn, alignmentReference);
+                    return;
+                }
+                partialAlignmentStreak.Reset();
+                if (fresh) pairLostFrames = alignmentLossStreak.Observe(detection.timestamp, true);
+                statusDetail = $"Alignment {alignmentReference}: near={detection.nearObserved}, far={detection.farObserved}, " +
+                    $"angle={detection.hasLineAngle}, usable={usable}, timeout={timedOut}, " +
+                    $"lostImages={pairLostFrames}/{pairLostFrameLimit}, partial={partial}, travel={travelled:F2}";
+                if (pairLostFrames > pairLostFrameLimit || timedOut)
+                {
+                    Fail($"Alignment observation unavailable; {statusDetail}");
                 }
                 else
                 {
-                    laneFollower.SetManualCommand(0f, 0f);
+                    laneFollower.SetManualCommand(0f, 0f, alignmentReference);
                 }
                 return;
             }
 
             pairLostFrames = 0;
-            float correction = detection.lateralError * visualLateralGain +
-                               detection.headingError * visualHeadingGain;
-            correction = Mathf.Clamp(correction, -maximumVisualTurn, maximumVisualTurn);
-            float errorAmount = Mathf.Clamp01(Mathf.Abs(detection.lateralError) + Mathf.Abs(detection.headingError));
-            float move = activeVisualMoveCommand * Mathf.Lerp(1f, 0.35f, errorAmount);
+            alignmentLossStreak.Reset();
+            partialAlignmentStreak.Reset();
+            partialAlignmentStarted = -1f;
+            var command = BoundaryAlignmentControl.Calculate(detection.lineAngleRadians, detection.lateralError,
+                visualHeadingGain, visualLateralGain, maximumVisualTurn,
+                boundaryAlignMoveCommand);
+            float correction = BoundaryAlignmentControl.ConstrainToExitHeading(command.turn,
+                exitHeadingError, alignmentExitHeadingTolerance, maximumVisualTurn);
+            float move = command.move;
+            float angleDegrees = detection.lineAngleRadians * Mathf.Rad2Deg;
 
-            bool aligned = travelled >= minimumAlignTravel &&
-                           Mathf.Abs(detection.lateralError) <= alignedLateralTolerance &&
-                           Mathf.Abs(detection.headingError) <= alignedHeadingTolerance;
-            alignedFrames = aligned ? alignedFrames + 1 : 0;
-            statusDetail = $"Virtual line: lateral={detection.lateralError:F2}, heading={detection.headingError:F2}, stable={alignedFrames}/{requiredAlignedFrames}";
+            bool aligned = exitHeadingReady && travelled >= minimumAlignTravel &&
+                           Mathf.Abs(detection.lateralError) <= boundaryAlignmentLateralTolerance &&
+                           Mathf.Abs(angleDegrees) <= boundaryAlignmentAngleTolerance;
+            alignedFrames = alignmentStreak.Observe(detection.timestamp, aligned);
+            statusDetail = $"Align {alignmentReference} to blue: lateral={detection.lateralError:F2}, theta={angleDegrees:F1} deg, " +
+                $"exitYawError={exitHeadingError:F1}/{alignmentExitHeadingTolerance:F1}, " +
+                $"move={(aligned ? 0f : move):F2}, turn={(aligned ? 0f : correction):F2}, visualTurn={command.turn:F2}, " +
+                $"confidence={detection.confidence:F2}, stable={alignedFrames}/{requiredAlignedFrames}";
 
             if (alignedFrames >= requiredAlignedFrames)
             {
-                targetRouteIndex++;
-                State = MissionState.FollowingLane;
-                PlantNodeId target = activeRoute[targetRouteIndex];
-                statusDetail = $"Aligned; following ID {(int)target} ({target})";
-                laneFollower.ResumeLaneFollowing();
+                FinishAlignment("alignment confirmed");
                 return;
             }
-            laneFollower.SetManualCommand(move, correction);
+            laneFollower.SetManualCommand(aligned ? 0f : move, aligned ? 0f : correction, alignmentReference);
+        }
+
+        private void FinishAlignment(string reason)
+        {
+            Debug.Log($"Navigation transition: {State} -> lane following ({reason}); node={CurrentNode}, " +
+                      $"next={activeRoute[targetRouteIndex + 1]}, yaw={laneFollower.transform.eulerAngles.y:F1}, " +
+                      $"desiredYaw={desiredExitYaw:F1}; {statusDetail}", this);
+            targetRouteIndex++;
+            normalLaneLostFrames = 0;
+            markerFrames = 0;
+            State = MissionState.FollowingLane;
+            PlantNodeId target = activeRoute[targetRouteIndex];
+            statusDetail = $"Following ID {(int)target} ({target}); {reason}";
+            laneFollower.ResumeLaneFollowing();
         }
 
         private void BeginStraightThroughJunction(float pathDeflection)
@@ -810,6 +973,8 @@ namespace ShipRobot.Navigation
 
         private void EnterStraightMarkerFallback()
         {
+            Debug.LogWarning($"Navigation transition: lane following -> marker fallback; node={CurrentNode}, " +
+                             $"target={activeRoute[targetRouteIndex]}, yaw={laneFollower.transform.eulerAngles.y:F1}; {statusDetail}", this);
             markerFrames = 0;
             normalLaneLostFrames = 0;
             motionStartPosition = laneFollower.transform.position;
@@ -906,7 +1071,6 @@ namespace ShipRobot.Navigation
             activeApproachDistance = maximumApproachDistance;
             activeApproachCommand = approachCommand;
             activeSearchTurnCommand = searchTurnCommand;
-            activeVisualMoveCommand = visualAlignMoveCommand;
             if (maneuverOverrides == null) return;
             foreach (ManeuverOverride item in maneuverOverrides)
             {
@@ -914,7 +1078,6 @@ namespace ShipRobot.Navigation
                 activeApproachDistance = item.approachDistance;
                 activeApproachCommand = item.approachCommand;
                 activeSearchTurnCommand = item.searchTurnCommand;
-                activeVisualMoveCommand = item.visualAlignMoveCommand;
                 return;
             }
         }
@@ -990,6 +1153,7 @@ namespace ShipRobot.Navigation
             statusDetail = reason;
             laneFollower?.SetDriveEnabled(false);
             Debug.LogError($"Navigation mission fault: {reason}", this);
+            RecordDrivingLog("fault");
         }
 
         private static float PlanarDistance(Vector3 a, Vector3 b)

@@ -64,6 +64,10 @@ namespace ShipRobot.LaneFollowing
             laneDetector.LatestDetection.IsUsable(EffectiveMinimumConfidence, EffectiveMaximumDetectionAge);
         public float MoveCommand { get; private set; }
         public float TurnCommand { get; private set; }
+        public bool IsManualControl => manualControl;
+        public string TrackingReferenceName => laneDetector != null ? laneDetector.ActiveReference.ToString() : "None";
+        public float ManualMoveRequest => manualMoveCommand;
+        public float ManualTurnRequest => manualTurnCommand;
 
         // Independent motor authority: policy control never passes through lane/ToF scaling.
         private bool continuousControl;
@@ -170,6 +174,7 @@ namespace ShipRobot.LaneFollowing
                 return;
             }
 
+            laneDetector?.SetTrackingReference(HsvLaneDetector.TrackingReference.LaneCentre);
             if (laneDetector == null ||
                 !laneDetector.LatestDetection.IsUsable(EffectiveMinimumConfidence, EffectiveMaximumDetectionAge))
             {
@@ -264,7 +269,11 @@ namespace ShipRobot.LaneFollowing
         }
 
         public void SetManualCommand(float move, float turn)
+            => SetManualCommand(move, turn, HsvLaneDetector.TrackingReference.LaneCentre);
+
+        public void SetManualCommand(float move, float turn, HsvLaneDetector.TrackingReference reference)
         {
+            laneDetector?.SetTrackingReference(reference);
             driveEnabled = true;
             manualControl = true;
             manualMoveCommand = Mathf.Clamp(move, -1f, 1f);
@@ -273,6 +282,8 @@ namespace ShipRobot.LaneFollowing
 
         public void ResumeLaneFollowing()
         {
+            laneDetector?.SetTrackingReference(HsvLaneDetector.TrackingReference.LaneCentre);
+            previousLateralError = 0f;
             manualControl = false;
             driveEnabled = true;
         }

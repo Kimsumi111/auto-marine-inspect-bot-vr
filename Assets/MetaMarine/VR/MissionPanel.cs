@@ -19,6 +19,8 @@ namespace MetaMarine.VR
         private GameObject hud;
         private Text hudText;
         private InputAction submit, cancel, page;
+        private InputAction togglePanel;
+        private bool panelVisible = true;
         private int resultPage;
         private void OnEnable()
         {
@@ -31,6 +33,8 @@ namespace MetaMarine.VR
             submit = Action("Submit mission", "<XRController>{LeftHand}/secondaryButton", "<Keyboard>/f5");
             cancel = Action("Cancel mission", "<XRController>{RightHand}/thumbstickClicked", "<Keyboard>/f6");
             page = Action("Next result", "<XRController>{LeftHand}/thumbstickClicked", "<Keyboard>/f4");
+            togglePanel = new InputAction("Toggle mission panel", InputActionType.Button, "<Keyboard>/f3");
+            togglePanel.Enable();
             if (head == null) return;
             hud = new GameObject("Mission HUD", typeof(RectTransform), typeof(Canvas), typeof(Image));
             hud.transform.SetParent(head.transform, false);
@@ -61,12 +65,13 @@ namespace MetaMarine.VR
         }
         private void Update()
         {
-            if (submit.WasPressedThisFrame()) Submit();
+            if (togglePanel.WasPressedThisFrame()) panelVisible = !panelVisible;
+            if (panelVisible && submit.WasPressedThisFrame()) Submit();
             if (cancel.WasPressedThisFrame()) api.Cancel();
             if (page.WasPressedThisFrame()) resultPage++;
             if (hud == null) return;
-            hud.SetActive(head.enabled);
-            if (head.enabled)
+            hud.SetActive(panelVisible && head.enabled);
+            if (panelVisible && head.enabled)
             {
                 string report = "";
                 var points = api.Report?.points ?? api.Snapshot?.points;
@@ -79,7 +84,7 @@ namespace MetaMarine.VR
                 }
                 hudText.text = "설비 점검 | " + Mode() + "\n" + StateText() + "\n" + Clip(api.Notice, 110) +
                     "\n명령: " + Clip(draft, 120) + "\n" + (voice != null ? Clip(voice.StatusSummary, 150) : "") +
-                    "\nY/F5 전송·재확인 | 오른쪽 스틱 클릭/F6 취소" +
+                    "\nF3 패널 숨김/표시 | Y/F5 전송·재확인 | 오른쪽 스틱 클릭/F6 취소" +
                     "\nA/F8 녹음 | X/F7 마이크 | 왼쪽 스틱 클릭/F4 결과" + report;
             }
         }
@@ -119,6 +124,11 @@ namespace MetaMarine.VR
             label ??= new GUIStyle(GUI.skin.label) { font = font, fontSize = 18, wordWrap = true, richText = false };
             button ??= new GUIStyle(GUI.skin.button) { font = font, fontSize = 17 };
             input ??= new GUIStyle(GUI.skin.textArea) { font = font, fontSize = 19, wordWrap = true };
+            // Keep the reopen control on the right so the upper-left HSV view is clear.
+            if (GUI.Button(new Rect(Mathf.Max(12, Screen.width - 212), 12, 200, 34),
+                panelVisible ? "입력 패널 숨기기 (F3)" : "입력 패널 열기 (F3)", button))
+                panelVisible = !panelVisible;
+            if (!panelVisible) return;
             float width = Mathf.Min(650, Screen.width - 24), height = Mathf.Min(740, Screen.height - 24);
             var rect = new Rect(12, 12, width, height);
             var old = GUI.color; GUI.color = new Color(0.025f, 0.055f, 0.10f, 0.98f);
@@ -165,6 +175,7 @@ namespace MetaMarine.VR
         {
             if (voice != null) { voice.TranscriptReady -= ReceiveTranscript; voice.ExternalMissionUI = false; }
             submit?.Dispose(); cancel?.Dispose(); page?.Dispose();
+            togglePanel?.Dispose();
             if (hud != null) Destroy(hud);
             if (font != null) Destroy(font);
             label = button = input = null;

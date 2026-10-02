@@ -40694,6 +40694,10 @@ MonoBehaviour:
   rowsPerBand: 7
   minimumRunWidth: 2
   minimumBoundarySeparation: 0.2
+  removeSmallMaskComponents: 1
+  minimumComponentArea: 24
+  minimumPreservedLineLength: 12
+  minimumPreservedLineAspectRatio: 3
   smoothing: 0.35
   minimumPublishedConfidence: 0.05
   drawDebugOverlay: 1
@@ -81587,24 +81591,34 @@ MonoBehaviour:
   requiredSideLossFrames: 30
   approachCommand: 0.16
   searchTurnCommand: 0.2
+  exitSearchMoveCommand: 0.4
+  maximumExitSearchAdvanceDistance: 0.6
   minimumTurnBeforePair: 10
   maximumSearchTurn: 150
   exitHeadingTolerance: 35
   maximumExitLaneProbeDistance: 1.2
   exitLaneProbeCommand: 0.1
   minimumPairConfidence: 0.1
-  requiredPairFrames: 1
-  visualAlignMoveCommand: 0.11
-  visualLateralGain: 0.5
-  visualHeadingGain: 0.42
-  maximumVisualTurn: 0.22
+  requiredPairFrames: 3
+  visualLateralGain: 0.8
+  visualHeadingGain: 0.7
+  maximumVisualTurn: 0.4
   alignedLateralTolerance: 0.35
   alignedHeadingTolerance: 0.4
+  boundaryAlignmentLateralTolerance: 0.08
+  boundaryAlignmentAngleTolerance: 8
+  boundaryAlignMoveCommand: 0.4
+  partialAlignMoveCommand: 0.1
+  maximumPartialAlignTurn: 0.2
+  maximumPartialAlignTravel: 0.2
+  alignmentObservationTimeout: 0.8
+  maximumPartialAlignSeconds: 6
+  requiredPartialAlignedFrames: 3
+  alignmentExitHeadingTolerance: 15
   requiredAlignedFrames: 2
   minimumAlignTravel: 0.05
   maximumAlignTravel: 1.5
   pairLostFrameLimit: 12
-  maximumExitLaneRecoveryAttempts: 2
   maneuverOverrides:
   - entryNode: 6
     junctionNode: 3
@@ -81612,42 +81626,36 @@ MonoBehaviour:
     approachDistance: 1.5
     approachCommand: 0.16
     searchTurnCommand: 0.2
-    visualAlignMoveCommand: 0.11
   - entryNode: 3
     junctionNode: 1
     exitNode: 4
     approachDistance: 1.5
     approachCommand: 0.16
     searchTurnCommand: 0.2
-    visualAlignMoveCommand: 0.11
   - entryNode: 1
     junctionNode: 4
     exitNode: 6
     approachDistance: 1.5
     approachCommand: 0.16
     searchTurnCommand: 0.2
-    visualAlignMoveCommand: 0.11
   - entryNode: 4
     junctionNode: 6
     exitNode: 5
     approachDistance: 1.5
     approachCommand: 0.16
     searchTurnCommand: 0.2
-    visualAlignMoveCommand: 0.11
   - entryNode: 6
     junctionNode: 5
     exitNode: 2
     approachDistance: 1.5
     approachCommand: 0.16
-    searchTurnCommand: 0.2
-    visualAlignMoveCommand: 0.11
+    searchTurnCommand: 0.24
   - entryNode: 5
     junctionNode: 2
     exitNode: 3
     approachDistance: 1.5
     approachCommand: 0.16
     searchTurnCommand: 0.2
-    visualAlignMoveCommand: 0.11
   straightDirectionTolerance: 25
   straightJunctionCommand: 0.14
   minimumStraightTravel: 0.2
@@ -98219,7 +98227,7 @@ Transform:
   m_GameObject: {fileID: 1562290249}
   serializedVersion: 2
   m_LocalRotation: {x: 0.7071068, y: -0, z: -0, w: 0.7071068}
-  m_LocalPosition: {x: 0, y: -1.7099099, z: 0}
+  m_LocalPosition: {x: 0.202, y: -1.7099099, z: 0}
   m_LocalScale: {x: 0.4, y: 0.4, z: 0.4}
   m_ConstrainProportionsScale: 0
   m_Children: []

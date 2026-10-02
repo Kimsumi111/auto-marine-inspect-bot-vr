@@ -1,6 +1,52 @@
 # 공유 개발 컨텍스트
 
+2026-10-02 우측 하단 회전 조정: UnderMid(6)→UnderRight(5)→UpperRight(2) 경로 override의 searchTurnCommand를 0.20→0.24(20% 증대)로 변경했다. 씬 생성 도구도 junction=UnderRight 항목에 0.24를 적용한다. 이 값은 회전 명령 강도 상한이며 고정 회전각 증가가 아니다; confidence/새 영상 3개 전환과 전진 명령·계획 yaw·탐색 제한은 기존대로다. 실제 회전/재획득 효과는 새 Play에서 미검증.
+
+2026-10-02 사용자 요청으로 출구 전환 단순화: SearchingExitLane에서 LaneCentre 관측이 LaneFollower.TryGetLaneDetection의 effective confidence/age 기준(기본 confidence 0.30/age 0.20초)을 새 영상 3개(requiredPairFrames)에서 만족하면 바로 FollowingLane으로 전환한다. 별도 pair confidence gate, 경계 파란선 정렬, near/far 각도 계산, 횡오차·계획 yaw 완료 gate는 전환에 요구하지 않는다. 중앙 관측을 유지해 reference 전환으로 생기는 confidence 초기화가 없다. 남은 횡오차/방향 보정은 기존 LaneFollower PD 제어에 맡긴다. 회전 탐색 전진 상수 0.40과 기존 탐색 이동/회전 한도는 유지한다. VisualAlign 상태/설정/핸들러는 호환을 위해 남았으나 현재 출구 탐색 흐름에서 진입하지 않는다. CSV/Console에 confidence confirmed; boundary alignment skipped 사유 및 중앙 confidence 연속 확인 수/영상 age를 기록한다. 기존 새 프레임/제어/로그 회귀 검증과 Unity 참조 컴파일 통과; 변경 후 실제 Play 전환/주행은 미검증.
+
+2026-10-02 Align 역방향 회전 보완: 실제 로그에서 near 단일 관측 횡오차 보정이 yaw 298→345도로 출구 yaw -82(278도)에서 멀어지는 것을 확인했다. 단일 띠 모드는 횡오차 기반 조향을 제거하고 계획 출구 yaw 오차만으로 최대 0.20/4도 deadband 방향 보정 및 기존 제한 저속 전진을 사용한다. 양쪽 띠 정렬에서도 출구 yaw 오차 15도 밖에서는 출구 방향 보정 우선, 허용 범위 가장자리(12도 이상)에서 출구를 더 벗어나는 영상 조향은 차단한다. 단일/양쪽 정렬 완료는 기존 조건에 출구 yaw 오차 ≤15도 확인을 추가했다. 기존 이동/시간 제한 및 Search 복귀 없음 유지. 로그 상세에 출구 yaw 오차/허용각과 영상 원래 조향을 기록한다. 방향 대칭·deadband·반대 영상 조향 제한 회귀 검증과 Unity 참조 컴파일 통과; 실제 Play 효과는 미검증.
+
+2026-10-02 주행 로그 분석/단일 관측 정렬 전환 수정: 실제 Play CSV에서 LaneCentre→RightBoundary 변경 때 횡오차 -0.16→0.72, 이후 near=True/far=False로 횡오차 0.61인 상태에서 약 0.9초 뒤 partial observation handoff, 이어 중앙 차선 소실 및 StraightToNextMarker를 확인했다. 단일 관측은 이제 실패 횟수로 FollowingLane에 넘기지 않는다. usable/age와 nearObserved, 최소 정렬 변위 0.05m, |횡오차|≤0.08을 새 영상 3개에서 확인해야 partial lateral alignment confirmed 사유로 전환하며 각도 미확인은 명시한다. 단일 띠 전진 0.10은 정렬 시작점 변위 0.20m까지, 이후 전진 0/최대 조향 0.20으로 계속 보정한다. 단일 관측 모드 시간 제한은 6초이며 정상 양쪽 관측 회복 시 초기화한다. 시간 초과/관측 소실은 상세 fault로 정지, Search로 복귀하지 않는다. 기존 회귀 검증과 Unity 참조 컴파일 통과; 변경 후 실제 주행은 미검증.
+
+2026-10-02 Align 조향 강화 및 주행 CSV 로그: visualHeadingGain 0.42→0.70, visualLateralGain 0.50→0.80, maximumVisualTurn 0.22→0.40; 단일 띠 회복 최대 조향 0.10→0.20. 전진 상수 0.40 유지. Play별 runtime/navigation/navigation-UTC-고유ID.csv를 생성한다(Editor는 저장소 루트, 빌드는 Application.persistentDataPath 아래). 주행은 0.10초 간격, Idle/Fault/Completed는 1초 간격, 상태 전환·fault·disable은 별도 행으로 즉시 flush. UTC/시뮬레이션 시간, 경로/노드/목표, 위치/yaw/방향오차, reference, near/far/각도 유효성, θ/횡오차/confidence/pair, 영상 timestamp/age, 수동 명령과 실제 적용 명령, drive/safety/avoidance 상태, 탐색/정렬 변위, 실패 영상 수/정렬 확인 수, 조향 파라미터와 상세 이유를 기록한다. source=unity_simulation; 수동 요청 값은 manual_control=true일 때만 유효하며 적용 명령은 최근 FixedUpdate 결과이므로 전환 행과 한 물리 tick 차이가 날 수 있다. 파일 I/O 실패는 경고하고 로그만 비활성화한다. 파일은 Git 제외, Console에 저장 위치 출력. CSV escaping/실행 중 flush·파일 종료·조향 강화 회귀 검증 및 Unity 참조 컴파일 통과. 실제 Play 주행 로그 생성과 조향 효과는 미검증.
+
+2026-10-02 사용자 정정: VisualAlign→SearchingExitLane 복귀를 제거했다. 정상 정렬 완료는 FinishAlignment로 FollowingLane(LaneCentre)에 전환한다. 단일 띠 관측 손실 한도 도달 시 관측이 여전히 confidence/age 기준을 만족하면 partial observation handoff 사유를 기록하고 동일하게 FollowingLane으로 넘긴다(정렬 성공으로 표시하지 않음). 영상 timeout 또는 유효 관측 없음은 정지·명시적 fault로 처리한다. 불필요해진 최대 재탐색 횟수 설정을 제거했다. 중앙 기준 변경 시 이전 confidence를 무효화하여 새 영상을 기다리는 기존 동작 유지. Unity 참조 컴파일 및 기존 제어 회귀 검증 통과; 실제 Play 흐름은 미검증.
+
+2026-10-02 정렬 관측 회복 보완: Detection에 nearObserved/farObserved를 추가하고 미검출 띠의 십자는 숨긴다(제어용 단일 띠 fallback 좌표와 구분). VisualAlign 관측 실패는 새 timestamp당 한 번만 집계하며 정상 양쪽 관측에서 초기화한다. 영상이 0.80초 동안 갱신되지 않으면 정지·제한 재탐색한다. fresh/age/confidence 기준을 만족하는 단일 띠 관측은 θ를 사용하지 않고 횡오차만으로 전진 0.10/최대 조향 0.10으로 회복을 시도한다. 허용 변위는 정렬 시작점 기준 0.20m(누적 경로 길이 아님)이며 이후 정지한다. 양쪽 관측 회복 시 기존 상수 전진 0.40 정렬로 복귀한다. near/far/각도 유효성·fresh 실패 수·timeout을 표시/실패 로그에 기록한다. 새 프레임 집계 회귀 검증 및 Unity 참조 컴파일 통과; 실제 Play 회복 효과는 미검증. 동일 물리 선의 near/far 대응 관계는 아직 보장하지 않는다.
+
+2026-10-02 사용자 요청으로 회전 전진을 상수화: SearchingExitLane exitSearchMoveCommand=0.40, VisualAlign boundaryAlignMoveCommand=0.40. 정렬 전진의 cos 계산과 minimumBoundaryAlignMove/maximumBoundaryAlignMove 설정을 제거했다. 조향은 기존 sin(θ)+횡오차 보정을 유지한다. Inspector·씬 생성 도구·jetbot_env 값을 맞췄다. 탐색 전진 변위 0.60m 제한, 정렬 이동 1.50m 제한, 관측 확인/미관측 정지는 유지한다. 상수 전진 제어 검증과 Unity 참조 컴파일 통과; 실제 Play 주행은 미검증.
+
+2026-10-02 사용자 요청으로 회전 중 전진 성분을 증대: exitSearchMoveCommand 0.05→0.20(4배), 경계 정렬 minimumBoundaryAlignMove 0.08→0.24(3배), maximumBoundaryAlignMove 0.20→0.40(2배). VisualAlign 전진은 0.24+0.16·clamp01(cos(θ)). 조향과 초반 직진 approachCommand는 유지한다. 탐색 전진 변위 제한 0.60m 이후 제자리 회전 및 정렬 이동 제한 1.50m, 관측 확인/미관측 정지는 유지한다. 코드 기본값·jetbot_env·씬 생성 설정 일치 확인. 실제 Play 주행 효과는 미검증.
+
+2026-10-02 경계 정렬 전진을 cos 방식으로 변경: 조향은 기존 clamp(0.42·sin(θ)+0.50·횡오차, ±0.22)를 유지한다. 전진은 0.08+(0.20-0.08)·clamp01(cos(θ))이며 정렬 시 최대 0.20, 90°에서 최소 0.08이다. VisualAlign의 기존 기본/경로별 visualAlignMoveCommand 및 boundaryForwardTurnGain 설정은 제거하고 minimumBoundaryAlignMove/maximumBoundaryAlignMove로 조절한다. 정렬 완료 확인 중 정지·선 미관측 시 정지·기존 재탐색 제한은 유지한다. 제어 회귀 검증 및 Unity 참조 컴파일 통과, 실제 Play 주행은 미검증.
+
+2026-10-02 HSV 잡음 필터: ROI/HSV 마스크 생성 직후 8방향 연결 영역을 분석한다. 처리 영상 기준 minimumComponentArea=24픽셀 미만은 제거하되, 4픽셀 이상이고 minimumPreservedLineLength=12픽셀 이상·주축 분산 기준 길쭉함 minimumPreservedLineAspectRatio=3 이상인 선은 보존한다(대각선 포함). removeSmallMaskComponents로 비활성화할 수 있으며 Inspector에서 기준을 조절한다. 모든 차선/경계 관측과 HSV 디버그 녹색 마스크는 필터 결과를 사용하며 removed 픽셀 수를 표시한다. 기존 ROI는 유지한다. 큰 시설 잡음 또는 차선에 붙은 잡음은 이 필터로 분리되지 않는다. 마스크 회귀 검증과 Unity 참조 컴파일 통과; 실제 Play 영상/주행은 미검증.
+
+2026-10-02 경계 정렬 제어 변경: 선택 경계의 near/far 관측으로 파란 수직 기준선 대비 θ=atan2(x_far-x_near, y_far-y_near)를 측정한다. VisualAlign 조향은 clamp(0.42·sin(θ)+0.50·횡오차, ±0.22), 전진은 clamp(기본 0.11+0.35·|조향|, 0.08, 0.20)이다. 좌회전은 오른쪽 경계, 우회전은 왼쪽 경계를 선택하며 near/far 중 하나라도 없으면 정지·기존 재탐색 제한을 적용한다. 최소 이동 0.05m 이후 횡오차 ≤0.08 및 |θ|≤8°를 새 프레임 2개에서 확인하면 기존 중앙 추종으로 복귀한다. 로그에 θ(도), 횡오차, 전진/조향 명령을 표시한다. 순수 제어 회귀 검증과 Unity 참조 컴파일 통과; 실제 Unity Play 주행은 미검증이다.
+
 현재 상태: 2026-10-02 VR·Agent 단일 Backend 통합. 공개 계약은 VR_BACKEND_API_V1.md, 실행은 backend.main:app/8767. 이전 단계 기록은 아래 이력으로 보존한다.
+
+2026-10-02 최신 사용자 정정: FollowingLane은 기존 차선 중앙 추종으로 복구했다. 회전 중 line search 후 VisualAlign을 추가해 경로 기준 좌회전은 오른쪽 경계, 우회전은 왼쪽 경계를 파란 기준선에 정렬한 뒤 중앙 추종으로 넘긴다. 선택은 경로 진입·출구 yaw 차이로 결정해 재탐색 때 남은 회전각 때문에 바뀌지 않는다. 정렬 횡오차 허용 0.08/각도 8°, 새 프레임 확인 중 정지. 경계 미관측은 정지·기존 제한 재탐색, 최대 정렬 이동 제한 유지. 컴파일 통과, 실제 주행 효과는 미검증이다.
+
+2026-10-02 사용자 요청: FollowingLane의 파란 수직 기준선에 좌/우 경계선 자체를 맞추는 TrackingReference를 추가했다. jetbot_env는 RightBoundary이며 Inspector에서 LaneCentre/LeftBoundary/RightBoundary를 선택한다. 선택된 분석 띠의 좌측/우측 최외곽 HSV run으로 횡오차·방향오차·confidence를 계산한다. 수동 회전 탐색은 기존 중앙/차선 쌍 검출을 사용한다. reference 변경 시 이전 confidence·필터를 무효화하고 새 영상을 기다린다. Unity 참조 컴파일 통과, 실제 경계 추종 주행은 미검증이다.
+
+2026-10-02 사용자 정정 반영: 출구 차선 탐색은 계획 각도 도달 여부와 무관하게 회전 중 유효한 차선 쌍과 LaneFollower의 실제 confidence/age 기준을 새 관측 3개에서 만족하면 바로 FollowingLane로 전환한다. VisualAlign을 거치지 않는다. 회전 중 저속 전진과 탐색 제한은 유지한다. 실제 회전·추종 성공은 미검증이다.
+
+2026-10-02 사용자 요청: 출구 차선 탐색 회전 중 저속 전진 명령 0.05를 함께 적용한다. 탐색 시작점 기준 평면 변위 0.60m부터 회전 중 전진을 중단하며, 계획 방향 도달 후 기존 probe와 차선 쌍 3프레임 확인·정렬 조건은 유지한다. Inspector/jetbot_env/씬 생성 도구 설정과 searchAdvance 로그를 추가했다. 실제 회전 후 재획득 효과는 미검증이다.
+
+2026-10-02: HSV 화면 확인을 위해 MissionPanel 접기/펼치기(F3·오른쪽 위 버튼)를 추가했다. HUD 표시도 함께 제어하며 상태 조회·임무·입력 내용은 유지한다. 숨김 중 전송은 막고 취소는 유지한다.
+
+2026-10-02 첫 좌회전 후 차선 재획득 보완: exit search는 새 카메라 프레임 3개에서 연속 유효한 차선 쌍을 확인한 뒤 VisualAlign로 전환하고 확인 중 전진을 멈춘다. VisualAlign 완료도 새 timestamp의 관측만 집계한다. jetbot_env와 씬 생성 도구의 requiredPairFrames를 3으로 맞췄다. exit search/VisualAlign/FollowingLane/fallback 전환에 경로·방향·인식 지표 로그를 추가했다. FreshDetectionStreak 회귀 검증과 Unity 참조 컴파일 통과. 실제 좌회전 개선/전체 주행 성공은 새 Play에서 미검증이다.
+
+2026-10-02 연결 후속: 종료된 이전 Editor PID의 8765 리스너 잔류와 새 Editor bind 실패를 확인했다. `.unity-tcp-port` 머신별 설정을 지원하고 이 PC는 8768로 우회했다. Backend health unity_port=8768 확인·Unity 코드 컴파일 통과. 사용자 새 Play에서 실제 Unity 연결과 시작 가능 상태가 모두 true인 것을 확인했다. Backend 테스트 46개 통과. HTTP/임무 계약과 주행 동작은 유지한다.
+
+2026-10-02 후속 연결 진단: 서버 health 정상이나 새 Play TCP 연결 검사 거부. 종료된 서버 참조로 재시작을 건너뛰는 경로를 보완하고 Play 진입/재컴파일 후 활성 bridge의 TCP 복원·진단을 추가했다. 컴파일 통과; 실제 연결 회복은 사용자 새 Play에서 확인 필요하다.
+
+2026-10-02 요청 실패 진단: Backend health 정상·Agent 구성됨, Unity telemetry 미연결. Editor의 8765 포트 잔류 및 포트 충돌 로그 확인. EquipmentTcpServer 등록 목록과 Editor Play 종료/재컴파일/종료 전 DisposeAll 훅을 추가했다. 연결 중 포트 해제·재바인딩·반복 정리 테스트 통과, Editor 훅 컴파일 통과. 기존 잔류 소켓 제거는 Editor 재시작 필요; 실제 연결 회복은 미검증.
+
+2026-10-02: LLM 호출 시작·성공·실패·취소·시간·OpenAI 응답 메타데이터와 Tool 실행 이벤트를 추가하고 DB 옆 회전 JSONL 로그로 저장한다. 46개 테스트 통과. 실제 실행 기록에서 OpenAI 계획·시작 선택·Unity ACK 성공 후 `Exit lane not visible after 1.20 m at the planned heading` 실패를 확인했다. Navigation 실패 상세에 경로 노드·방향·차선 탐색 지표를 추가했다(주행 파라미터 유지). Unity 참조 컴파일 통과; 원인 해결/전체 주행 성공은 미확정이다.
+
+2026-10-02: 사용자 요청으로 Unity Editor 점검 씬 Play 시 Backend 자동 시작을 추가했다. 이미 실행 중인 서버 재사용, 포트 점유 감지, 숨김 실행, 기존 Python 환경 대체를 지원한다. 주행·씬 코드 변경 없음. Unity 참조 컴파일 및 서버 단독 기동 확인, 실제 Play 자동 실행은 미검증이다.
 
 기준일: 2026-10-02. 현재 저장소의 코드와 설정을 읽어 작성했다. Unity Play, VR 장치, 실제 하드웨어 및 전체 E2E 실행 성공을 이번 문서 작성에서 검증하지 않았다.
 

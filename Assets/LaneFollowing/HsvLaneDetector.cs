@@ -10,6 +10,17 @@ namespace ShipRobot.LaneFollowing
     [DisallowMultipleComponent]
     public sealed class HsvLaneDetector : MonoBehaviour
     {
+        public enum TrackingReference { LaneCentre, LeftBoundary, RightBoundary }
+        public TrackingReference ActiveReference { get; private set; }
+        public void SetTrackingReference(TrackingReference reference)
+        {
+            if (ActiveReference == reference) return;
+            ActiveReference = reference;
+            hasFilteredDetection = false;
+            var detection = LatestDetection;
+            detection.confidence = 0f; // Wait for a new image in the new reference frame.
+            LatestDetection = detection;
+        }
         public enum MarkingLayout
         {
             TwoBoundaries,
@@ -21,6 +32,10 @@ namespace ShipRobot.LaneFollowing
         {
             [Range(-1f, 1f)] public float lateralError;
             [Range(-1f, 1f)] public float headingError;
+            public float lineAngleRadians;
+            public bool hasLineAngle;
+            public bool nearObserved;
+            public bool farObserved;
             [Range(0f, 1f)] public float confidence;
             public bool hasBoundaryPair;
             [Range(0f, 1f)] public float boundaryPairConfidence;
@@ -67,6 +82,11 @@ namespace ShipRobot.LaneFollowing
         [SerializeField, Range(0f, 1f)] private float minimumBoundarySeparation = 0.20f;
 
         [Header("Filtering")]
+        [SerializeField] private bool removeSmallMaskComponents = true;
+        [Tooltip("Minimum connected area in processing-image pixels. Long thin lines are preserved separately.")]
+        [SerializeField, Min(1)] private int minimumComponentArea = 24;
+        [SerializeField, Min(2)] private int minimumPreservedLineLength = 12;
+        [SerializeField, Min(1f)] private float minimumPreservedLineAspectRatio = 3f;
         [SerializeField, Range(0f, 1f)] private float smoothing = 0.35f;
         [SerializeField, Range(0f, 1f)] private float minimumPublishedConfidence = 0.05f;
         [SerializeField] private bool drawDebugOverlay = true;
@@ -80,6 +100,8 @@ namespace ShipRobot.LaneFollowing
         private Color32[] pixels;
         private Color32[] overlayPixels;
         private bool[] mask;
+        private readonly LaneMaskNoiseFilter noiseFilter = new LaneMaskNoiseFilter();
+        private int removedNoisePixels;
         private float nextDetectionTime;
         private bool hasFilteredDetection;
 
@@ -135,6 +157,9 @@ namespace ShipRobot.LaneFollowing
 
             pixels = readbackTexture.GetPixels32();
             BuildMask();
+            removedNoisePixels = removeSmallMaskComponents
+                ? noiseFilter.Apply(mask, processingWidth, processingHeight, minimumComponentArea,
+                    minimumPreservedLineLength, minimumPreservedLineAspectRatio) : 0;
             MeasureBoundarySideVisibility(
                 out bool leftVisible, out bool rightVisible,
                 out float leftSideConfidence, out float rightSideConfidence);
@@ -149,6 +174,12 @@ namespace ShipRobot.LaneFollowing
             bool boundaryPair = nearFound || farFound;
             float pairConfidence = boundaryPair ? Mathf.Max(nearConfidence, farConfidence) : 0f;
 
+            if (ActiveReference != TrackingReference.LaneCentre)
+            {
+                nearFound = TryFindTrackingBoundary(nearY, out nearCentre, out nearConfidence);
+                farFound = TryFindTrackingBoundary(farY, out farCentre, out farConfidence);
+            }
+
             if (!nearFound && !farFound)
             {
                 PublishInvalidDetection(leftVisible, rightVisible, leftSideConfidence, rightSideConfidence);
@@ -156,6 +187,8 @@ namespace ShipRobot.LaneFollowing
                 return false;
             }
 
+            bool hasLineAngle = nearFound && farFound;
+            float lineAngle = hasLineAngle ? Mathf.Atan2(farCentre - nearCentre, farY - nearY) : 0f;
             if (!nearFound)
             {
                 nearCentre = farCentre;
@@ -176,6 +209,8 @@ namespace ShipRobot.LaneFollowing
             {
                 lateral = Mathf.Lerp(LatestDetection.lateralError, lateral, smoothing);
                 heading = Mathf.Lerp(LatestDetection.headingError, heading, smoothing);
+                if (hasLineAngle && LatestDetection.hasLineAngle)
+                    lineAngle = Mathf.Lerp(LatestDetection.lineAngleRadians, lineAngle, smoothing);
                 confidence = Mathf.Lerp(LatestDetection.confidence, confidence, smoothing);
             }
 
@@ -183,6 +218,10 @@ namespace ShipRobot.LaneFollowing
             {
                 lateralError = lateral,
                 headingError = heading,
+                lineAngleRadians = lineAngle,
+                hasLineAngle = hasLineAngle,
+                nearObserved = nearFound,
+                farObserved = farFound,
                 confidence = confidence,
                 hasBoundaryPair = boundaryPair,
                 boundaryPairConfidence = pairConfidence,
@@ -194,7 +233,7 @@ namespace ShipRobot.LaneFollowing
             };
             hasFilteredDetection = confidence >= minimumPublishedConfidence;
 
-            UpdateDebugTexture(nearCentre, farCentre, nearY, farY);
+            UpdateDebugTexture(nearFound ? nearCentre : -1f, farFound ? farCentre : -1f, nearY, farY);
             return hasFilteredDetection;
         }
 
@@ -291,6 +330,36 @@ namespace ShipRobot.LaneFollowing
                 ? (confidenceSum / validRows) * (validRows / (float)Mathf.Max(rowsPerBand, 1))
                 : 0f;
             return validRows > 0;
+        }
+
+        private bool TryFindTrackingBoundary(int centreY, out float centreX, out float confidence)
+        {
+            float sum = 0f, strength = 0f;
+            int count = 0;
+            for (int y = centreY - rowsPerBand / 2; y <= centreY + rowsPerBand / 2; y++)
+            {
+                if (y < 0 || y >= processingHeight) continue;
+                float chosen = -1f;
+                int chosenWidth = 0;
+                for (int x = 0; x < processingWidth;)
+                {
+                    if (!mask[y * processingWidth + x]) { x++; continue; }
+                    int start = x;
+                    while (x < processingWidth && mask[y * processingWidth + x]) x++;
+                    int length = x - start;
+                    if (length < minimumRunWidth) continue;
+                    float centre = start + (length - 1) * 0.5f;
+                    if (chosen < 0f || (ActiveReference == TrackingReference.LeftBoundary ? centre < chosen : centre > chosen))
+                    { chosen = centre; chosenWidth = length; }
+                }
+                if (chosen < 0f) continue;
+                sum += chosen;
+                strength += Mathf.Clamp01(chosenWidth / 8f);
+                count++;
+            }
+            centreX = count > 0 ? sum / count : -1f;
+            confidence = count > 0 ? strength / count * Mathf.Clamp01(count / (float)Mathf.Max(rowsPerBand, 1)) : 0f;
+            return count > 0;
         }
 
         private bool TryFindRowCentre(int y, out float centreX, out float confidence)
@@ -474,10 +543,13 @@ namespace ShipRobot.LaneFollowing
             GUI.DrawTexture(new Rect(10, 10, processingWidth * scale, processingHeight * scale), debugTexture, ScaleMode.ScaleToFit, false);
             Detection d = LatestDetection;
             GUI.Label(new Rect(10, 15 + processingHeight * scale, 420, 24),
-                $"Lane: lateral={d.lateralError:F2}, heading={d.headingError:F2}, confidence={d.confidence:F2}, " +
+                $"Lane [{ActiveReference}]: lateral={d.lateralError:F2}, heading={d.headingError:F2}, confidence={d.confidence:F2}, " +
                 $"L={(d.leftBoundaryVisible ? d.leftBoundaryConfidence.ToString("F2") : "NO")}, " +
                 $"R={(d.rightBoundaryVisible ? d.rightBoundaryConfidence.ToString("F2") : "NO")}, " +
                 $"pair={(d.hasBoundaryPair ? d.boundaryPairConfidence.ToString("F2") : "NO")}");
+            GUI.Label(new Rect(10, 39 + processingHeight * scale, 420, 24),
+                $"Noise filter: {(removeSmallMaskComponents ? "ON" : "OFF")}, removed={removedNoisePixels}px, " +
+                $"near={d.nearObserved}, far={d.farObserved}, angle={(d.hasLineAngle ? "VALID" : "N/A")}");
         }
     }
 }

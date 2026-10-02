@@ -2,6 +2,9 @@
 TCP monitoring and cancellation never wait for this graph or a diagnosis task.
 """
 import asyncio
+import time
+from uuid import uuid4
+from .telemetry import sink
 from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
 from .vr_diagnosis import DiagnosisError
@@ -31,12 +34,30 @@ class AgentRunner:
 
     async def choose(self, job, observation, allowed):
         self.service.active(job)
-        name, reason = await asyncio.wait_for(self.model.choose(observation, allowed), self.decision_timeout)
+        name, reason = await self.llm_call(job, "choose", self.model.choose(observation, allowed))
         self.service.active(job)
         if name not in allowed or not isinstance(reason, str):
             raise ValueError("Invalid tool selection")
         self.service.event(job, "decision", dict(tool=name, reason=reason[:500]))
         return name
+
+    async def llm_call(self, job, operation, coroutine):
+        call_id = uuid4().hex
+        started = time.monotonic()
+        base = dict(call_id=call_id, operation=operation)
+        self.service.event(job, "llm_started", base)
+        token = sink.set(lambda metadata: self.service.event(job, "llm_response", dict(**base, **metadata)))
+        try:
+            result = await asyncio.wait_for(coroutine, self.decision_timeout)
+            self.service.event(job, "llm_succeeded", dict(**base, duration_ms=round((time.monotonic()-started)*1000)))
+            return result
+        except BaseException as error:
+            self.service.event(job, "llm_cancelled" if isinstance(error, asyncio.CancelledError) else "llm_failed",
+                dict(**base, error_type=type(error).__name__, http_status=getattr(error, "status_code", None),
+                     duration_ms=round((time.monotonic()-started)*1000)))
+            raise
+        finally:
+            sink.reset(token)
 
     async def run(self, job):
         try:
@@ -55,7 +76,7 @@ class AgentRunner:
     async def plan(self, state):
         job = self.job(state)
         self.service.touch(job, state="PLANNING", step="agent_plan", message="Agent가 목표와 계획을 확인하고 있습니다.")
-        plan = await asyncio.wait_for(self.model.plan(job["request"]["text"]), self.decision_timeout)
+        plan = await self.llm_call(job, "plan", self.model.plan(job["request"]["text"]))
         self.service.active(job)
         if plan.task != "inspection" or len(plan.targets) != 2 or set(plan.targets) != {"A", "B"}:
             self.service.finish(job, "FAILED", "unsupported_goal: 현재는 설비 A+B 전체 점검만 지원합니다.")
@@ -89,10 +110,13 @@ class AgentRunner:
         for attempt in range(2):
             self.service.active(job)
             try:
+                self.service.event(job, "tool_started", dict(tool="diagnose_inspection", point=point["point"], attempt=attempt+1))
                 result = await self.service.diagnosis.run(path)
                 self.service.active(job)
+                self.service.event(job, "tool_succeeded", dict(tool="diagnose_inspection", point=point["point"], attempt=attempt+1))
                 return result
             except DiagnosisError:
+                self.service.event(job, "tool_failed", dict(tool="diagnose_inspection", point=point["point"], attempt=attempt+1, error_type="DiagnosisError"))
                 self.service.active(job)
                 failure = dict(**observation, error="diagnosis_failed", attempt=attempt + 1)
                 self.service.event(job, "observation", failure)

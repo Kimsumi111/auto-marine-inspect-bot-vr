@@ -76,6 +76,11 @@ def test_graph_retry_report_and_recovery(tmp_path):
         assert all(p["status"] == "SUCCEEDED" for p in report["points"])
         log = client.get(f"/mission/{mid}/events").json()["events"]
         assert {"plan", "decision", "tool_result", "diagnosis", "report"} <= {e["kind"] for e in log}
+        assert {"llm_started", "llm_succeeded", "tool_started", "tool_succeeded", "tool_failed"} <= {e["kind"] for e in log}
+        audit = [json.loads(line) for line in (tmp_path / "agent-events.jsonl").read_text(encoding="utf-8").splitlines()]
+        assert all(row["mission_id"] == mid for row in audit)
+        assert "fixture.csv" not in json.dumps(audit)
+        assert all(e["data"]["duration_ms"] >= 0 for e in log if e["kind"] == "llm_succeeded")
         assert "fixture.csv" not in json.dumps(model.observations)
     with TestClient(create_app(path, FakeLink(), enable_agent=False)) as client:
         assert client.get("/mission/by-request/" + req["request_id"]).json()["state"] == "COMPLETED"

@@ -6,6 +6,7 @@
 # See: https://github.com/github/gitignore/tree/main/Global
 #
 .utmp/
+.unity-tcp-port
 /[Ll]ibrary/
 /[Tt]emp/
 /[Oo]bj/
@@ -107,6 +108,9 @@ InitTestScene*.unity*
 
 # Hand-authored dashboard projects (not Unity-generated projects).
 !gui/**/*.csproj
+!tools/NavigationTracking.Tests/*.csproj
+tools/NavigationTracking.Tests/bin/
+tools/NavigationTracking.Tests/obj/
 gui/**/bin/
 gui/**/obj/
 .venv-diagnosis/
@@ -119,3 +123,4 @@ tools/mission_mock/__pycache__/
 backend/**/__pycache__/
 backend/.pytest_cache/
 backend/runtime/
+runtime/navigation/

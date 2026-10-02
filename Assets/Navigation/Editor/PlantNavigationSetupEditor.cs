@@ -411,18 +411,32 @@ namespace ShipRobot.Navigation.Editor
             coordinator.FindProperty("junctionActionDistance").floatValue = 1.20f;
             coordinator.FindProperty("minimumTurnBeforePair").floatValue = 10f;
             coordinator.FindProperty("maximumSearchTurn").floatValue = 150f;
+            coordinator.FindProperty("exitSearchMoveCommand").floatValue = 0.40f;
+            coordinator.FindProperty("maximumExitSearchAdvanceDistance").floatValue = 0.60f;
             coordinator.FindProperty("exitHeadingTolerance").floatValue = 35f;
             coordinator.FindProperty("maximumExitLaneProbeDistance").floatValue = 1.2f;
             coordinator.FindProperty("exitLaneProbeCommand").floatValue = 0.10f;
             coordinator.FindProperty("minimumPairConfidence").floatValue = 0.10f;
-            coordinator.FindProperty("requiredPairFrames").intValue = 1;
+            coordinator.FindProperty("requiredPairFrames").intValue = 3;
             coordinator.FindProperty("alignedLateralTolerance").floatValue = 0.35f;
             coordinator.FindProperty("alignedHeadingTolerance").floatValue = 0.40f;
             coordinator.FindProperty("requiredAlignedFrames").intValue = 2;
             coordinator.FindProperty("minimumAlignTravel").floatValue = 0.05f;
+            coordinator.FindProperty("boundaryAlignmentLateralTolerance").floatValue = 0.08f;
+            coordinator.FindProperty("boundaryAlignmentAngleTolerance").floatValue = 8f;
+            coordinator.FindProperty("boundaryAlignMoveCommand").floatValue = 0.40f;
+            coordinator.FindProperty("visualLateralGain").floatValue = 0.80f;
+            coordinator.FindProperty("visualHeadingGain").floatValue = 0.70f;
+            coordinator.FindProperty("maximumVisualTurn").floatValue = 0.40f;
+            coordinator.FindProperty("partialAlignMoveCommand").floatValue = 0.10f;
+            coordinator.FindProperty("maximumPartialAlignTurn").floatValue = 0.20f;
+            coordinator.FindProperty("maximumPartialAlignTravel").floatValue = 0.20f;
+            coordinator.FindProperty("alignmentObservationTimeout").floatValue = 0.80f;
+            coordinator.FindProperty("maximumPartialAlignSeconds").floatValue = 6f;
+            coordinator.FindProperty("requiredPartialAlignedFrames").intValue = 3;
+            coordinator.FindProperty("alignmentExitHeadingTolerance").floatValue = 15f;
             coordinator.FindProperty("maximumAlignTravel").floatValue = 1.50f;
             coordinator.FindProperty("pairLostFrameLimit").intValue = 12;
-            coordinator.FindProperty("maximumExitLaneRecoveryAttempts").intValue = 2;
             coordinator.FindProperty("turnCentrePastMarkerDistance").floatValue = 0.65f;
             coordinator.FindProperty("rightBottomMaximumApproachDistance").floatValue = 10f;
             coordinator.FindProperty("fallbackStraightCommand").floatValue = 0.10f;
@@ -462,8 +476,8 @@ namespace ShipRobot.Navigation.Editor
                 item.FindPropertyRelative("exitNode").intValue = (int)transitions[i, 2];
                 item.FindPropertyRelative("approachDistance").floatValue = 1.50f;
                 item.FindPropertyRelative("approachCommand").floatValue = 0.16f;
-                item.FindPropertyRelative("searchTurnCommand").floatValue = 0.20f;
-                item.FindPropertyRelative("visualAlignMoveCommand").floatValue = 0.11f;
+                item.FindPropertyRelative("searchTurnCommand").floatValue =
+                    transitions[i, 1] == PlantNodeId.UnderRight ? 0.24f : 0.20f;
             }
         }
 

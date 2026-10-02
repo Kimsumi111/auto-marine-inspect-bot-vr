@@ -1,5 +1,7 @@
 import json
 import sqlite3
+import logging
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 
@@ -8,6 +10,12 @@ class Storage:
     def __init__(self, path):
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
+        self.audit_logger = logging.getLogger("metamarine.audit." + str(path.resolve()))
+        self.audit_logger.setLevel(logging.INFO)
+        self.audit_logger.propagate = False
+        self.audit_handler = RotatingFileHandler(path.parent / "agent-events.jsonl", maxBytes=5_000_000, backupCount=3, encoding="utf-8")
+        self.audit_handler.setFormatter(logging.Formatter("%(message)s"))
+        self.audit_logger.addHandler(self.audit_handler)
         # Separate DB means durable mission commits do not release the owner lock.
         self.owner = sqlite3.connect(str(path) + ".owner", timeout=0)
         try:
@@ -20,6 +28,8 @@ class Storage:
             self.db.commit()
         except Exception:
             self.owner.close()
+            self.audit_logger.removeHandler(self.audit_handler)
+            self.audit_handler.close()
             raise
 
     def load(self):
@@ -36,3 +46,8 @@ class Storage:
     def close(self):
         self.db.close()
         self.owner.close()
+        self.audit_logger.removeHandler(self.audit_handler)
+        self.audit_handler.close()
+
+    def audit(self, mission_id, event):
+        self.audit_logger.info(json.dumps(dict(mission_id=mission_id, **event), ensure_ascii=False, allow_nan=False))

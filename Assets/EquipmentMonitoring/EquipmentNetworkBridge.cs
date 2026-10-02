@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using UnityEngine;
 
 namespace ShipRobot.EquipmentMonitoring
@@ -20,11 +21,26 @@ namespace ShipRobot.EquipmentMonitoring
         private void Start() => StartServer();
         private void OnEnable() { if (started) StartServer(); }
         private bool started;
+        public void EnsureServerStarted()
+        {
+            if (isActiveAndEnabled) StartServer();
+        }
         private void StartServer()
         {
             started = true;
-            if (server != null) return;
-            try { server = new EquipmentTcpServer(); server.Start(port); startupError = ""; }
+            if (MissionSnapshot != null)
+            {
+                string config = Path.Combine(Directory.GetParent(Application.dataPath).FullName, ".unity-tcp-port");
+                if (File.Exists(config) && int.TryParse(File.ReadAllText(config).Trim(), out int configuredPort) &&
+                    configuredPort >= 1024 && configuredPort <= 65535)
+                {
+                    if (server != null && server.Port != configuredPort) { server.Dispose(); server = null; }
+                    port = configuredPort;
+                }
+            }
+            if (server != null && server.IsRunning) return;
+            server?.Dispose();
+            try { server = new EquipmentTcpServer(); server.Start(port); startupError = ""; Debug.Log($"Equipment TCP listening: 127.0.0.1:{port}, object={name}, mission={(MissionSnapshot != null)}", this); }
             catch (Exception ex) { server?.Dispose(); server = null; startupError = ex.Message; Debug.LogError("Equipment TCP: " + ex.Message, this); }
         }
         private void Update()
