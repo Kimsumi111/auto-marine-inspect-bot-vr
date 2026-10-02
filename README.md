@@ -9,4 +9,7 @@
 연동 작업 전 [현재 인터페이스](docs/INTEGRATION_CONTRACTS.md)를 확인하세요.
 [Agent 도입 계획](docs/AGENT_PLAN.md)은 아직 구현되지 않은 제안입니다.
 
+VR 연동은 [확정 REST v1 계약 및 UI 실행 방법](docs/VR_BACKEND_API_V1.md)을 따릅니다.
+Unity REST 클라이언트·진행 UI와 모의 서버는 구현되어 있으며, 실제 Backend/Agent는 아직 미구현입니다.
+
 문서에는 구현 상태와 근거 코드가 함께 기록됩니다. 기능을 변경하면 관련 문서도 같은 변경에 포함하세요.

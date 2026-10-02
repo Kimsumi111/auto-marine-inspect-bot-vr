@@ -3,6 +3,15 @@
 기준일: 2026-10-02. 아래는 코드에 존재하는 계약이다. 향후 Agent 계약은 `AGENT_PLAN.md`에 별도로 기록한다.
 경로는 저장소 루트 기준이다.
 
+## VR Backend REST 클라이언트 (2026-10-02 추가)
+
+확정 요청·응답 형식은 [VR_BACKEND_API_V1.md](VR_BACKEND_API_V1.md)를 따른다.
+`MissionContract`, `MissionApiClient`, `MissionPanel`이 텍스트/음성 확인 후 접수, 상태 조회, 취소, 결과 표시를 구현한다.
+`PcVrView`에서 자동 설치한다. 실제 Backend 기본 포트는 8767로 예약했지만 서버는 아직 미구현이다.
+`tools/mission_mock/server.py`는 별도 8877 포트의 UI 테스트용 서버이며 Unity TCP/Agent/진단을 실행하지 않는다.
+음성 `TranscriptReady`는 입력창만 갱신한다. 사용자가 전송해야 임무를 접수한다.
+이전 요청 ID와 명령문은 복구 조회를 위해 로컬 PlayerPrefs에 임시 보존하며 완료 결과 확인 후 제거한다.
+
 ## Unity TCP v1
 
 근거: `Assets/EquipmentMonitoring/EquipmentWireProtocol.cs`, `EquipmentNetworkBridge.cs`, `EquipmentTcpServer.cs`, `RobotDashboardIntegration.cs`.

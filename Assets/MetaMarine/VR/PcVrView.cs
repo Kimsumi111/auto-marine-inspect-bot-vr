@@ -28,6 +28,7 @@ namespace MetaMarine.VR
             anchor.robot = robot.transform;
             anchor.head = headCamera.transform;
             if (GetComponent<VoiceTranscriptPanel>() == null) gameObject.AddComponent<VoiceTranscriptPanel>();
+            if (GetComponent<MissionPanel>() == null) gameObject.AddComponent<MissionPanel>();
         }
 
         private void OnEnable()

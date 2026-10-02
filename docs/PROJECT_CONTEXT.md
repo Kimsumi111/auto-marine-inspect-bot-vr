@@ -46,6 +46,8 @@
 | `config/`, `results/`, `wandb/` | PPO 설정과 학습 산출물 | 기존 자산 |
 | `data/` | 전류·진동 원본 CSV | 기존 오프라인 데이터 |
 | `backend/` | 신규 Agent 계층 제안 위치 | 아직 미구현 |
+| `Assets/MetaMarine/VR/Mission*.cs` | REST v1 클라이언트와 텍스트/음성·진행·결과 UI | 구현; 실제 Backend E2E 미검증 |
+| `tools/mission_mock/` | VR 계약 확인용 HTTP 모의 서버 | 구현; 실제 이동·LLM·진단 없음 |
 
 Unity 버전은 `ProjectSettings/ProjectVersion.txt`의 `6000.5.7f1`이다.
 패키지 기준은 `Packages/manifest.json`이며 OpenXR, XR Interaction Toolkit, ML-Agents가 포함된다.
@@ -91,6 +93,8 @@ TCP의 `mission_start`는 A+B 전체 임무만 시작한다. A 전용 시작 함
 
 | 날짜 | 변경 | 검증 |
 |---|---|---|
+| 2026-10-02 | 미확인 요청의 신규 임무 잠금과 주소 수정 잠금을 분리. 주소별 요청 보존 및 마지막 서버 주소 복원 | Unity 참조 컴파일 확인; 기존 요청 자동 삭제/재전송 없음 |
+| 2026-10-02 | VR REST v1 계약 확정, Unity 클라이언트·UI·모의 서버 추가. 실제 Backend는 미구현 유지 | 모의 HTTP 테스트 9개 및 Unity 참조 C# 컴파일 통과; Unity Play 요청·모의 4지점 완료·결과 UI 확인; 실제 Agent E2E/Quest 미검증 |
 | 2026-10-02 | 공유 컨텍스트·현재 계약·Agent 계획과 AI 도구 안내 추가 | 코드·설정 정적 검토; 런타임 미검증 |
 | 2026-10-02 | Unity 우선 개발 선택과 A/B 데이터·점검 지점·외부 임무 제한 확인 | 씬 YAML·임무 코드 정적 검토 |
 | 2026-10-02 | 사용자 승인으로 Python 3.12, FastAPI/Uvicorn, Pydantic, LangGraph, OpenAI Responses API·gpt-5.4-mini, SQLite, pytest 및 단일 Agent 구성 확정 | 설계 결정; 설치·API 실행·E2E 미검증 |

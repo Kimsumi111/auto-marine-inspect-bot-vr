@@ -1,6 +1,6 @@
 # Agent 도입 계획 — 미구현 제안
 
-기준일: 2026-10-02. 이 문서의 Backend, API, Tool 이름은 제안이며 현재 callable 기능이 아니다.
+기준일: 2026-10-02. Backend와 Tool은 아직 미구현이다. REST 요청·응답 계약은 [VR_BACKEND_API_V1.md](VR_BACKEND_API_V1.md)로 확정했고 Unity 클라이언트·진행 UI·모의 서버만 구현했다. 아래 API 제안보다 해당 v1 계약이 우선한다.
 팀 합의와 구현 후 상태를 갱신한다. 현재 계약은 `INTEGRATION_CONTRACTS.md` 참조.
 
 사용자는 Unity 우선 개발을 선택했다. 첫 연동 대상은 Unity 시뮬레이터이며 실제 하드웨어 어댑터는 후속 통합 대상이다.

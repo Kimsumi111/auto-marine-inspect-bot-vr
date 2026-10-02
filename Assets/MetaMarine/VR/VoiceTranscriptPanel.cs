@@ -15,6 +15,8 @@ namespace MetaMarine.VR
         public string preferredMicrophone = "";
         public string Transcript { get; private set; } = "말한 내용이 여기에 표시됩니다.";
         public event Action<string> TranscriptReady;
+        public bool ExternalMissionUI { get; set; }
+        public string StatusSummary => status + " · " + InputLevel + "\n마이크: " + (device ?? "없음");
         private const string Endpoint = "http://127.0.0.1:8766";
         private const int MaxSeconds = 15;
         private string status = "음성 서버 확인 중…";
@@ -109,7 +111,7 @@ namespace MetaMarine.VR
                 statusText.text = "음성 → 텍스트  |  " + status + " · " + InputLevel + "\n마이크: " + (device ?? "없음") +
                     "\nA/F8 시작·종료  ·  X/F7 마이크 변경  ·  B/F9 시점 재정렬";
             if (transcriptText != null) transcriptText.text = Transcript;
-            if (panel != null) panel.SetActive(headCamera != null && headCamera.enabled);
+            if (panel != null) panel.SetActive(!ExternalMissionUI && headCamera != null && headCamera.enabled);
         }
 
         public void ToggleRecording()
@@ -233,6 +235,7 @@ namespace MetaMarine.VR
 
         private void OnGUI()
         {
+            if (ExternalMissionUI) return;
             labelStyle ??= new GUIStyle(GUI.skin.label) { font = font, fontSize = 18, wordWrap = true };
             var rect = new Rect(20, 100, Mathf.Min(600, Screen.width - 40), 250);
             GUI.Box(rect, "");

@@ -114,3 +114,4 @@ tools/diagnosis/__pycache__/
 .venv-speech/
 tools/voice/models/
 tools/voice/__pycache__/
+tools/mission_mock/__pycache__/
