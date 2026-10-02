@@ -1,0 +1,2 @@
+# Contract-only dependencies; full backend dependencies follow during runtime work.
+pydantic==2.13.5

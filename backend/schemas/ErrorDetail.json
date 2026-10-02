@@ -1,0 +1,49 @@
+{
+  "$defs": {
+    "ErrorCode": {
+      "enum": [
+        "invalid_request",
+        "unknown_equipment",
+        "unsupported_targets",
+        "unity_unavailable",
+        "unity_not_ready",
+        "session_changed",
+        "mission_busy",
+        "id_conflict",
+        "not_found",
+        "result_not_ready",
+        "command_rejected",
+        "command_unconfirmed",
+        "timeout",
+        "diagnosis_failed",
+        "stop_unconfirmed",
+        "internal_error"
+      ],
+      "title": "ErrorCode",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "code": {
+      "$ref": "#/$defs/ErrorCode"
+    },
+    "message": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Message",
+      "type": "string"
+    },
+    "retryable": {
+      "title": "Retryable",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "code",
+    "message",
+    "retryable"
+  ],
+  "title": "ErrorDetail",
+  "type": "object"
+}

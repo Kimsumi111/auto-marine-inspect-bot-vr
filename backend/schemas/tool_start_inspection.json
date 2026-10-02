@@ -1,0 +1,39 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "targets": {
+      "items": {
+        "enum": [
+          "A",
+          "B"
+        ],
+        "type": "string"
+      },
+      "maxItems": 2,
+      "minItems": 2,
+      "title": "Targets",
+      "type": "array"
+    },
+    "mission_id": {
+      "maxLength": 80,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "title": "Mission Id",
+      "type": "string"
+    },
+    "expected_session_id": {
+      "maxLength": 80,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "title": "Expected Session Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "targets",
+    "mission_id",
+    "expected_session_id"
+  ],
+  "title": "StartInspectionArgs",
+  "type": "object"
+}

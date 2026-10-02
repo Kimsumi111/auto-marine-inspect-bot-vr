@@ -1,0 +1,31 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "mission_id": {
+      "maxLength": 80,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "title": "Mission Id",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "CANCELLING",
+        "CANCELLED"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "stop_confirmed": {
+      "title": "Stop Confirmed",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "mission_id",
+    "status",
+    "stop_confirmed"
+  ],
+  "title": "CancelAccepted",
+  "type": "object"
+}

@@ -45,9 +45,10 @@
 | `tools/voice/` | 한국어 Whisper HTTP 전사 서버 | 코드 존재; 로컬 모델 준비 필요 |
 | `config/`, `results/`, `wandb/` | PPO 설정과 학습 산출물 | 기존 자산 |
 | `data/` | 전류·진동 원본 CSV | 기존 오프라인 데이터 |
-| `backend/` | 신규 Agent 계층 제안 위치 | 아직 미구현 |
 | `Assets/MetaMarine/VR/Mission*.cs` | REST v1 클라이언트와 텍스트/음성·진행·결과 UI | 구현; 실제 Backend E2E 미검증 |
 | `tools/mission_mock/` | VR 계약 확인용 HTTP 모의 서버 | 구현; 실제 이동·LLM·진단 없음 |
+| `backend/` | 신규 Agent Backend | 계약·FastAPI·TCP·SQLite·LangGraph·OpenAI·진단 실행 구현, 실제 Unity Play E2E 미검증 |
+
 
 Unity 버전은 `ProjectSettings/ProjectVersion.txt`의 `6000.5.7f1`이다.
 패키지 기준은 `Packages/manifest.json`이며 OpenXR, XR Interaction Toolkit, ML-Agents가 포함된다.
@@ -98,5 +99,16 @@ TCP의 `mission_start`는 A+B 전체 임무만 시작한다. A 전용 시작 함
 | 2026-10-02 | 공유 컨텍스트·현재 계약·Agent 계획과 AI 도구 안내 추가 | 코드·설정 정적 검토; 런타임 미검증 |
 | 2026-10-02 | Unity 우선 개발 선택과 A/B 데이터·점검 지점·외부 임무 제한 확인 | 씬 YAML·임무 코드 정적 검토 |
 | 2026-10-02 | 사용자 승인으로 Python 3.12, FastAPI/Uvicorn, Pydantic, LangGraph, OpenAI Responses API·gpt-5.4-mini, SQLite, pytest 및 단일 Agent 구성 확정 | 설계 결정; 설치·API 실행·E2E 미검증 |
+| 2026-10-02 | API·Tool v1 계약 문서, Pydantic 모델, JSON Schema 생성기 및 스키마 추가 | Python 3.12.14/Pydantic 2.13.5에서 계약 테스트 8개 통과; 서버·Unity·OpenAI 연동 미구현 |
+| 2026-10-02 | FastAPI 접수/조회/취소, Unity TCP 재연결·ACK 처리, SQLite 중복 방지·재시작 처리 추가 | 총 11개 테스트 통과; 실제 Unity Play·OpenAI·전체 E2E 미검증 |
+| 2026-10-02 | LangGraph Agent, OpenAI 목표·계획·Function Calling, 진단 CLI, 이벤트·최종 보고 연결 | 총 15개 테스트, 실제 CSV/모델 4개 진단, OpenAI 독립 호출 통과; 실제 Unity Play E2E 미검증 |
 
 새 기능을 도입할 때 여기에 날짜, 근거 파일, 구현/제안 상태, 실제 수행한 검증을 추가한다.
+
+2026-10-02 원격 VR REST 클라이언트·모의 서버 변경을 통합했다. 현재 Backend와 VR의 REST 계약은 호환되지 않으며 `API_INTEGRATION_GAP.md`에 차이를 기록했다. VR→Backend 실제 연동은 미완료이다.
+
+2026-10-02 실제 Unity Play 검증: OpenAI 계획·Tool 선택과 Unity 시작·주행 성공, 지점 완료 전 Unity Fault로 실패. Agent가 정지 ACK 및 후속 Idle을 확인했다. 지점 진단·최종 보고까지의 E2E는 미완료이다. 정지 전 Fault detail을 `unity_fault` 이벤트로 보존하도록 보완했다.
+
+새 Play 재검증: `Marker fallback limit reached: 7.0 m, 30.0 s`를 실제 이벤트에서 확인했다. `NavigationCoordinator.UpdateStraightToNextMarker`의 도착 확인 전 fallback 제한으로 실패했으며, 마커를 관측하지 못한 구체적인 원인은 미확정이다. 정지 후 Idle 확인 성공, 진단 지점 0개이다.
+
+2026-10-02: `backend/smoke_unity.py` 실제 Backend·Unity E2E 실행 도구를 추가했다. 준비 상태 확인 후 A+B 명령을 접수하고 결과를 조회한다. 실제 Backend HTTP 기동 및 Unity 미연결 시 접수 차단만 검증했으며, Unity 주행은 아직 미검증이다.

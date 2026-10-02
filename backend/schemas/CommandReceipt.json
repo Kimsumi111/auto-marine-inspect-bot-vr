@@ -1,0 +1,40 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "command_id": {
+      "maxLength": 80,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "title": "Command Id",
+      "type": "string"
+    },
+    "session_id": {
+      "maxLength": 80,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "title": "Session Id",
+      "type": "string"
+    },
+    "acknowledged": {
+      "title": "Acknowledged",
+      "type": "boolean"
+    },
+    "outcome": {
+      "enum": [
+        "applied",
+        "rejected",
+        "unconfirmed"
+      ],
+      "title": "Outcome",
+      "type": "string"
+    }
+  },
+  "required": [
+    "command_id",
+    "session_id",
+    "acknowledged",
+    "outcome"
+  ],
+  "title": "CommandReceipt",
+  "type": "object"
+}

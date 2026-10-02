@@ -1,0 +1,25 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "mission_id": {
+      "maxLength": 80,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "title": "Mission Id",
+      "type": "string"
+    },
+    "inspection_id": {
+      "maxLength": 80,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "title": "Inspection Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "mission_id",
+    "inspection_id"
+  ],
+  "title": "DiagnoseInspectionArgs",
+  "type": "object"
+}

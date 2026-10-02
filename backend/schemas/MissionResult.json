@@ -1,0 +1,322 @@
+{
+  "$defs": {
+    "Assessment": {
+      "additionalProperties": false,
+      "properties": {
+        "inspection": {
+          "$ref": "#/$defs/InspectionRecord"
+        },
+        "status": {
+          "enum": [
+            "pending",
+            "running",
+            "assessed",
+            "unassessed"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "diagnosis": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiagnosisResult"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ErrorDetail"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "inspection",
+        "status"
+      ],
+      "title": "Assessment",
+      "type": "object"
+    },
+    "ClassifierResult": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "enum": [
+            "axis",
+            "bearing",
+            "belt",
+            "rotating"
+          ],
+          "title": "Key",
+          "type": "string"
+        },
+        "abnormal_probability": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Abnormal Probability",
+          "type": "number"
+        },
+        "threshold": {
+          "const": 0.5,
+          "default": 0.5,
+          "title": "Threshold",
+          "type": "number"
+        },
+        "abnormal": {
+          "title": "Abnormal",
+          "type": "boolean"
+        },
+        "model_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Model Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "abnormal_probability",
+        "abnormal",
+        "model_sha256"
+      ],
+      "title": "ClassifierResult",
+      "type": "object"
+    },
+    "DiagnosisResult": {
+      "additionalProperties": false,
+      "properties": {
+        "inspection_id": {
+          "maxLength": 80,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "title": "Inspection Id",
+          "type": "string"
+        },
+        "file_name": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "File Name",
+          "type": "string"
+        },
+        "sample_count": {
+          "minimum": 100,
+          "title": "Sample Count",
+          "type": "integer"
+        },
+        "sampling_frequency": {
+          "exclusiveMinimum": 0,
+          "title": "Sampling Frequency",
+          "type": "number"
+        },
+        "mode": {
+          "const": "offline_csv_replay",
+          "default": "offline_csv_replay",
+          "title": "Mode",
+          "type": "string"
+        },
+        "results": {
+          "items": {
+            "$ref": "#/$defs/ClassifierResult"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "title": "Results",
+          "type": "array"
+        }
+      },
+      "required": [
+        "inspection_id",
+        "file_name",
+        "sample_count",
+        "sampling_frequency",
+        "results"
+      ],
+      "title": "DiagnosisResult",
+      "type": "object"
+    },
+    "ErrorCode": {
+      "enum": [
+        "invalid_request",
+        "unknown_equipment",
+        "unsupported_targets",
+        "unity_unavailable",
+        "unity_not_ready",
+        "session_changed",
+        "mission_busy",
+        "id_conflict",
+        "not_found",
+        "result_not_ready",
+        "command_rejected",
+        "command_unconfirmed",
+        "timeout",
+        "diagnosis_failed",
+        "stop_unconfirmed",
+        "internal_error"
+      ],
+      "title": "ErrorCode",
+      "type": "string"
+    },
+    "ErrorDetail": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "message": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "retryable": {
+          "title": "Retryable",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ],
+      "title": "ErrorDetail",
+      "type": "object"
+    },
+    "InspectionRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "inspection_id": {
+          "maxLength": 80,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "title": "Inspection Id",
+          "type": "string"
+        },
+        "session_id": {
+          "maxLength": 80,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "equipment_id": {
+          "enum": [
+            "A",
+            "B"
+          ],
+          "title": "Equipment Id",
+          "type": "string"
+        },
+        "point": {
+          "enum": [
+            "inspect_point_A1",
+            "inspect_point_A2",
+            "inspect_point_B2",
+            "inspect_point_B1"
+          ],
+          "title": "Point",
+          "type": "string"
+        },
+        "completed_at": {
+          "format": "date-time",
+          "title": "Completed At",
+          "type": "string"
+        },
+        "data_available": {
+          "title": "Data Available",
+          "type": "boolean"
+        },
+        "data_origin": {
+          "const": "replay",
+          "default": "replay",
+          "title": "Data Origin",
+          "type": "string"
+        }
+      },
+      "required": [
+        "inspection_id",
+        "session_id",
+        "equipment_id",
+        "point",
+        "completed_at",
+        "data_available"
+      ],
+      "title": "InspectionRecord",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "api_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Api Version",
+      "type": "integer"
+    },
+    "mission_id": {
+      "maxLength": 80,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "title": "Mission Id",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "COMPLETED",
+        "FAILED",
+        "CANCELLED"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "summary": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Summary",
+      "type": "string"
+    },
+    "assessments": {
+      "items": {
+        "$ref": "#/$defs/Assessment"
+      },
+      "title": "Assessments",
+      "type": "array"
+    },
+    "diagnostic_coverage": {
+      "enum": [
+        "complete",
+        "partial",
+        "none"
+      ],
+      "title": "Diagnostic Coverage",
+      "type": "string"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ErrorDetail"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "mission_id",
+    "status",
+    "summary",
+    "assessments",
+    "diagnostic_coverage"
+  ],
+  "title": "MissionResult",
+  "type": "object"
+}

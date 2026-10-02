@@ -1,0 +1,58 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "equipment_id": {
+      "enum": [
+        "A",
+        "B"
+      ],
+      "title": "Equipment Id",
+      "type": "string"
+    },
+    "display_name": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Display Name",
+      "type": "string"
+    },
+    "equipment_type": {
+      "const": "unspecified",
+      "default": "unspecified",
+      "title": "Equipment Type",
+      "type": "string"
+    },
+    "source_equipment_id": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Source Equipment Id",
+      "type": "string"
+    },
+    "inspection_points": {
+      "items": {
+        "enum": [
+          "inspect_point_A1",
+          "inspect_point_A2",
+          "inspect_point_B2",
+          "inspect_point_B1"
+        ],
+        "type": "string"
+      },
+      "title": "Inspection Points",
+      "type": "array"
+    },
+    "data_origin": {
+      "const": "replay",
+      "default": "replay",
+      "title": "Data Origin",
+      "type": "string"
+    }
+  },
+  "required": [
+    "equipment_id",
+    "display_name",
+    "source_equipment_id",
+    "inspection_points"
+  ],
+  "title": "EquipmentInfo",
+  "type": "object"
+}

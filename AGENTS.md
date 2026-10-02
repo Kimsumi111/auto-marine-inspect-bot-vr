@@ -5,6 +5,7 @@
 1. `docs/PROJECT_CONTEXT.md`: 목표, 담당 범위, 기존 자산, 구현 상태.
 2. `docs/INTEGRATION_CONTRACTS.md`: 현재 실행 가능한 인터페이스와 제한.
 3. Agent 연동 작업이면 `docs/AGENT_PLAN.md`: 제안 구조와 아직 미구현인 계약.
+4. 신규 Backend·VR 연동이면 `docs/AGENT_API_V1.md`, `backend/contracts.py`, `backend/README.md`: 계약·서버·TCP·SQLite·Agent·진단 구현 및 검증 범위. 실제 Unity Play E2E는 미검증.
 
 ## 작업 원칙
 

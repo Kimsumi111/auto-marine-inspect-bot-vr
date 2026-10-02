@@ -1,5 +1,7 @@
 # VR ↔ Backend REST v1 — 확정 계약
 
+통합 상태 갱신(2026-10-02): `backend/`의 실제 Agent 서버가 추가됐으나 이 VR 계약과 응답·포트·취소·완료 의미가 다르다. 아래 문서는 현재 VR 클라이언트의 구현 기준이며 Backend 호환 완료를 뜻하지 않는다. [차이 목록](API_INTEGRATION_GAP.md)을 참고한다. 아래의 Backend 미구현 표현은 VR 개발 당시 상태이다.
+
 2026-10-02 사용자 요청에 따라 클라이언트 구현 기준을 확정했다. **실제 Backend/Agent는 아직 미구현**이다. 이 문서는 Backend 구현자가 맞춰야 하는 계약이며, 구현 완료를 뜻하지 않는다. `tools/mission_mock`는 UI 검증용이며 Unity TCP/LLM/진단 함수를 호출하지 않는다.
 
 ## 연결과 책임

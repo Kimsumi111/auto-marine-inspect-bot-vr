@@ -1,0 +1,98 @@
+{
+  "$defs": {
+    "ClassifierResult": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "enum": [
+            "axis",
+            "bearing",
+            "belt",
+            "rotating"
+          ],
+          "title": "Key",
+          "type": "string"
+        },
+        "abnormal_probability": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Abnormal Probability",
+          "type": "number"
+        },
+        "threshold": {
+          "const": 0.5,
+          "default": 0.5,
+          "title": "Threshold",
+          "type": "number"
+        },
+        "abnormal": {
+          "title": "Abnormal",
+          "type": "boolean"
+        },
+        "model_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Model Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "abnormal_probability",
+        "abnormal",
+        "model_sha256"
+      ],
+      "title": "ClassifierResult",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "inspection_id": {
+      "maxLength": 80,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "title": "Inspection Id",
+      "type": "string"
+    },
+    "file_name": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "File Name",
+      "type": "string"
+    },
+    "sample_count": {
+      "minimum": 100,
+      "title": "Sample Count",
+      "type": "integer"
+    },
+    "sampling_frequency": {
+      "exclusiveMinimum": 0,
+      "title": "Sampling Frequency",
+      "type": "number"
+    },
+    "mode": {
+      "const": "offline_csv_replay",
+      "default": "offline_csv_replay",
+      "title": "Mode",
+      "type": "string"
+    },
+    "results": {
+      "items": {
+        "$ref": "#/$defs/ClassifierResult"
+      },
+      "maxItems": 4,
+      "minItems": 4,
+      "title": "Results",
+      "type": "array"
+    }
+  },
+  "required": [
+    "inspection_id",
+    "file_name",
+    "sample_count",
+    "sampling_frequency",
+    "results"
+  ],
+  "title": "DiagnosisResult",
+  "type": "object"
+}

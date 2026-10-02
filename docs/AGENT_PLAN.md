@@ -1,7 +1,10 @@
 # Agent 도입 계획 — 미구현 제안
 
-기준일: 2026-10-02. Backend와 Tool은 아직 미구현이다. REST 요청·응답 계약은 [VR_BACKEND_API_V1.md](VR_BACKEND_API_V1.md)로 확정했고 Unity 클라이언트·진행 UI·모의 서버만 구현했다. 아래 API 제안보다 해당 v1 계약이 우선한다.
+기준일: 2026-10-02. v1 계약·FastAPI·Unity TCP·SQLite·LangGraph·OpenAI·진단 실행을 구현했다. 키 설정 시 Agent가 접수를 처리하며 키가 없으면 awaiting_agent로 대기한다. 실제 Unity Play E2E는 미검증이다. 아래 하드웨어 Tool 및 API 제안보다 `docs/AGENT_API_V1.md`의 Unity 우선 v1 계약을 먼저 적용한다.
+
 팀 합의와 구현 후 상태를 갱신한다. 현재 계약은 `INTEGRATION_CONTRACTS.md` 참조.
+
+원격 VR 구현의 `VR_BACKEND_API_V1.md`와 현재 Backend 계약은 서로 다르다. 직접 연동 완료로 간주하지 않는다. 차이와 후속 조정 범위는 [API_INTEGRATION_GAP.md](API_INTEGRATION_GAP.md) 참조.
 
 사용자는 Unity 우선 개발을 선택했다. 첫 연동 대상은 Unity 시뮬레이터이며 실제 하드웨어 어댑터는 후속 통합 대상이다.
 현재 설비는 A/B로 식별하고 펌프·모터 종류는 미확정이다. 아래 `pump_A` 예시는 확정 ID가 아니며 기존 Unity A/B와 자동 매핑하지 않는다.

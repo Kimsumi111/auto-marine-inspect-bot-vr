@@ -1,0 +1,29 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "api_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Api Version",
+      "type": "integer"
+    },
+    "mission_id": {
+      "maxLength": 80,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "title": "Mission Id",
+      "type": "string"
+    },
+    "status": {
+      "const": "PENDING",
+      "default": "PENDING",
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "mission_id"
+  ],
+  "title": "MissionAccepted",
+  "type": "object"
+}

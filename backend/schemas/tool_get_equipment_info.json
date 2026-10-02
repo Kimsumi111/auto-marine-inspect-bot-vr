@@ -1,0 +1,18 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "equipment_id": {
+      "enum": [
+        "A",
+        "B"
+      ],
+      "title": "Equipment Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "equipment_id"
+  ],
+  "title": "EquipmentArgs",
+  "type": "object"
+}

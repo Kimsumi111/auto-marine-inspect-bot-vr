@@ -1,0 +1,7 @@
+-r requirements-contracts.txt
+fastapi==0.142.2
+starlette==1.7.0
+uvicorn==0.54.0
+openai==3.23.0
+langgraph==1.2.12
+-r ../tools/diagnosis/requirements.txt
