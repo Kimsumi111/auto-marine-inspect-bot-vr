@@ -1,81 +1,71 @@
-# Backend 계약 단계
+# 통합 Backend: VR → Agent → Unity → CSV 진단
 
-현재 구현: `contracts.py` Pydantic 모델, `schemas/` JSON Schema, 오프라인 테스트.
-FastAPI 서버, 재연결하는 Unity TCP 클라이언트, SQLite 접수·조회·취소 저장을 구현했다.
-LangGraph 계획→실행→보고 그래프, OpenAI Responses 목표 해석·Function Calling,
-지점별 진단 CLI wrapper 및 완료 처리를 구현했다.
-OPENAI_API_KEY가 설정되면 POST /mission을 Agent가 처리한다. 키가 없으면 awaiting_agent로 대기한다.
-실제 Unity Play E2E는 아직 검증하지 않았다.
+2026-10-02 통합. 실행 서버는 `backend.main:app`, 기본 포트는 **8767**이다. `backend.vr_main:app`도 같은 앱을 가리키는 호환 별칭이다. 8000용 `command/status/assessments` 계약은 더 이상 운영 API가 아니다. Unity UI는 기존 `text/state/points` 계약을 그대로 사용한다.
 
-## Agent 실행 설정
+## 설치와 실행
 
-- `OPENAI_API_KEY`: Backend 환경변수로 설정. 키를 코드·Unity·로그에 넣지 않는다.
-- `SHIP_AGENT_MODEL`: 기본 gpt-5.4-mini.
-- `SHIP_DIAGNOSIS_PYTHON`: 진단 실행 Python 경로. 기본은 .venv-diagnosis가 있으면 해당 환경, 없으면 Backend Python.
-- 서버 실행 환경에서 키가 있으면 **자연어 명령이 실제 Unity 시작으로 이어질 수 있다**. WPF 연결을 해제하고 새 Play의 Idle 상태를 확인한다.
-- 같은 세션의 A+B 점검만 허용하며 A/B 단독·없는 대상은 실패로 보고한다.
-- 진단은 지점별 처리(동시 1건), 45초 제한, LLM 선택에 따라 같은 CSV 분석 최대 1회 재시도. 새 측정이 아니다.
-- Agent 임무 전체 제한은 600초. 실행 중 Agent 오류는 정지를 요청하며 확인 실패는 stop_unconfirmed로 보존한다.
-- `/mission/{id}/events`에서 계획, 짧은 선택 근거, 실제 결과, 보고 기록을 조회한다. 원본 파형·CSV 절대 경로는 OpenAI에 전송하지 않는다.
-- agent_ready는 클라이언트 구성 여부이며 API 계정 접근 성공이나 Unity 준비 완료를 보장하지 않는다.
+저장소 루트에서 Python 3.12로 실행한다.
 
 ```powershell
-backend/.venv/Scripts/python.exe -m backend.smoke_openai
+py -3.12 -m venv .venv-backend
+.venv-backend/Scripts/python.exe -m pip install -r backend/requirements.txt
+py -3.12 -m venv .venv-diagnosis
+.venv-diagnosis/Scripts/python.exe -m pip install -r tools/diagnosis/requirements.txt
 ```
 
-위 명령은 소량의 실제 OpenAI 호출을 수행하며 Unity 동작은 실행하지 않는다.
-2026-10-02: OpenAI 목표·계획 parse 및 Function Calling 실호출 통과.
-총 15개 테스트 통과: 기존 11개, 모의 Agent E2E·진단 재시도, 대상 거부, 계획 중 취소 후 늦은 응답의 재실행 차단, 실제 원본 CSV·모델 4개 진단 CLI 검증.
-모의 모델·Unity·진단으로 수행한 그래프 테스트와 실제 API·진단 검증을 구분한다.
-실제 VR 입력→OpenAI→Unity 주행→진단→결과의 통합 시연은 다음 검증 단계이다.
-
-## 실제 Unity E2E 검증
-
-Backend 서버를 실행하고 WPF 연결을 해제한 뒤 Unity의 `Assets/jetbot_env.unity`에서 새 Play를 시작한다.
-별도 터미널에서 아래 명령으로 실제 A+B 시뮬레이션 점검을 시작한다. OpenAI API 호출 비용이 발생한다.
+Backend 프로세스에 `OPENAI_API_KEY`를 설정한 뒤 `backend/start-backend.bat`를 실행한다. 키를 Unity, 저장소, 채팅, 로그에 넣지 않는다. 기존 서버와 WPF 직접 TCP 연결은 종료하고 **단일 서버·단일 worker**로 실행한다. 다음 명령도 같은 서버를 실행한다.
 
 ```powershell
-backend/.venv/Scripts/python.exe -m backend.smoke_unity
+.venv-backend/Scripts/python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 8767 --workers 1 --no-access-log
 ```
 
-Agent 구성과 fresh Idle/can_start를 먼저 확인하며, 준비되지 않으면 임무를 접수하지 않는다.
-접수 후 상태 변화·지점별 진단·최종 결과·저장된 이벤트 수를 출력한다.
-중단/대기 시간 초과/조회 오류 시 취소 요청과 종료 상태 확인을 시도한다. 정지 미확인은 명시적으로 표시한다.
-이 도구는 VR 음성 입력이나 실제 하드웨어 검증을 대신하지 않는다.
-2026-10-02: 실제 Backend HTTP 실행과 Unity 미연결 시 접수 차단을 검증했다. Unity 주행 E2E는 미검증이다.
+- `MARINE_AGENT_MODE`: 기본 `openai`. 키가 없으면 health의 agent_ready=false, 새 접수는 503 agent_unavailable이며 임무 기록을 만들지 않는다. 기존 임무 조회·취소는 계속 가능하다.
+- `SHIP_AGENT_MODEL`: 기본 `gpt-5.4-mini`. 기존 OpenAI Responses 목표 해석과 Function Calling을 재사용한다.
+- 외부 API 없이 통신을 시험하려면 같은 서버를 `MARINE_AGENT_MODE=fixed_ab`로 명시적으로 실행한다. 고정 문구 `설비 A와 B를 점검해줘`, `A+B 점검`, `A와 B를 점검해줘`만 지원하며 Agent 실행으로 표시하지 않는다. 키 누락 때 자동으로 이 모드로 바뀌지 않는다.
+- `SHIP_DIAGNOSIS_PYTHON`: 기본 `.venv-diagnosis/Scripts/python.exe`.
+- `MARINE_UNITY_PORT`: 기본 8765. `MARINE_DB`: 기본 `backend/runtime/missions.sqlite3`.
+- `/health`의 agent_ready는 클라이언트 구성 여부이며 실제 API 인증 성공 증거가 아니다. unity_connected와 unity_can_start도 확인한다.
 
-2026-10-02 실제 Play 검증: OpenAI 계획·Tool 선택→Unity 시작 ACK→주행까지 성공했으나 지점 완료 전 Unity Fault로 종료됐다. Agent의 mission_stop ACK와 후속 Idle 확인은 성공했다. 진단·최종 보고 E2E 성공으로 기록하지 않는다. Fault 원인이 정지 후 사라지는 문제를 보완해 `unity_fault` 이벤트에 정지 전 상태와 detail을 저장한다. 설비 A/B 목표의 ID 추출 안내도 명확히 했다. 재검증에는 새 Play가 필요하다.
+## 통합된 실행 흐름
 
-새 Play 재검증에서도 지점 완료 전 실패했고, `unity_fault.detail`은 `Marker fallback limit reached: 7.0 m, 30.0 s`였다. `NavigationCoordinator.UpdateStraightToNextMarker`의 도착 확인 전 fallback 시간/거리 제한이다. Agent 정지 및 Idle 확인은 성공했다. 마커 관측·경로·방향 중 구체적인 실패 원인은 추가 확인이 필요하며 제한값을 늘려 해결했다고 주장하지 않는다.
+1. Unity 새 Play → UI 주소 `http://127.0.0.1:8767` 적용.
+2. 음성 또는 텍스트 입력 후 사용자가 전송한다. 음성 전사만으로 실행하지 않는다.
+3. 접수 ID를 SQLite에 저장하고 LangGraph가 목표·계획을 해석한다. A+B만 지원하며 A 단독/없는 설비를 A+B로 확대하지 않는다.
+4. Agent의 시작/보류 선택 후 Backend가 fresh Idle과 같은 Play 세션을 다시 확인하고 mission_start를 한 번 전송한다.
+5. 별도 TCP 수신 루프가 주행·Fault·점검 이벤트를 감시한다. 지점별 진단과 LLM 응답을 기다리지 않는다.
+6. 각 지점에서 기존 CSV 진단을 실행한다. 동시 추론 1건, 실행당 45초. Agent는 실패 시 같은 CSV 분석을 최대 1회 재시도하거나 미판정으로 끝낸다. 새 센서 측정은 아니다.
+7. Unity Completed와 4지점 SUCCEEDED를 모두 확인한 뒤 Agent가 결과 보고를 선택한다. 숫자와 요약은 실제 결과로 작성하며 이상 검출도 정상적인 임무 완료다. 미판정이 남으면 전체 FAILED이다.
 
-## 서버 실행
+진행 snapshot에 points, agent_mode, plan을 제공한다. `/mission/{id}/events`에는 계획, 도구 선택 근거, 실행·진단·Fault·보고를 저장한다. CSV 절대 경로·원본 파형을 모델 입력으로 보내지 않는다. 모델별 확률은 독립 결과다.
 
-저장소 루트에서:
+## 취소·복구
+
+- 시작 ACK 유실·주행 중 연결 끊김은 FAILED + requires_attention으로 잠근다. 같은 요청을 다시 보내도 자동 출발하지 않는다. 취소를 다시 요청해 정지 ACK와 새 Idle/canStart=false를 확인한다.
+- 취소는 LLM을 기다리지 않고 Agent·진단 작업을 중단한다. 지연된 결과는 반영하지 않는다. 시작 ACK 대기 중에도 정지 경로는 별도 실행한다.
+- Unity Fault 원인을 정지 명령 전에 이벤트로 보존한다. 전체 임무 제한은 900초, Agent 판단 호출당 65초다.
+- Unity 종료가 이미 확인된 상태에서는 남은 진단/보고만 취소하고 정지 확인 상태를 반환한다.
+- Backend 재시작은 기존 기록을 보존하며 미완료 작업을 자동 재실행하지 않는다. 이전 VR DB를 그대로 사용한다. 동료 서버의 `backend/data/missions.db`는 별도 과거 기록이며 자동 합치거나 삭제하지 않는다. 서버 교체 전 이전 서버의 임무 종료와 Unity Play 종료를 확인한다.
+- 같은 DB의 중복 프로세스는 owner 잠금으로 차단한다. 다른 DB를 사용해 이 제한을 우회하지 않는다. Unity TCP는 한 클라이언트만 지원한다.
+
+## 검증
 
 ```powershell
-backend/.venv/Scripts/python.exe -m pip install -r backend/requirements-dev.txt
-backend/.venv/Scripts/python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --workers 1
-backend/.venv/Scripts/python.exe -m pytest backend/tests -q
+.venv-backend/Scripts/python.exe -m pytest backend/tests -q
 ```
 
-가상환경이 없으면 Python 3.12의 `python -m venv backend/.venv`로 먼저 만든다.
-`GET /health`, `GET /unity/state`, `/docs`에서 상태와 API를 확인한다. OpenAI 키는 이 단계에서 필요하지 않다.
-Unity에서 jetbot_env 씬 Play, 기존 WPF는 연결 해제한다. 서버는 loopback 전용, 단일 worker로 실행한다.
-`SHIP_UNITY_PORT`(기본 8765), `SHIP_AGENT_DB`(기본 backend/data/missions.db)를 지원한다.
-SQLite 기록은 삭제 전까지 유지된다. 서버 재시작 시 미종료 임무는 FAILED/command_unconfirmed로 바꾸고 재실행하지 않는다.
-Backend 종료·연결 해제는 Unity 자동 정지를 보장하지 않는다. 실행 중이면 종료 전에 취소와 정지 확인이 필요하다.
+2026-10-02 통합 중 46개 테스트 통과: VR REST 접수·복구·중복, TCP 분할/ACK, 정지 미확인 잠금과 정지 재요청, 계획/보고 중 취소, LLM 진단 선택 대기 중 Fault 정지, 실패·재시도, 실제 저장 CSV와 모델을 쓰는 Agent 전체 흐름. 테스트의 LLM·Unity 이벤트는 모의이며 실제 OpenAI→Unity 전체 시연 성공을 뜻하지 않는다.
 
-2026-10-02: 계약 8개와 API/SQLite 재시작/TCP 분할 수신·ACK·미응답 3개, 총 11개 통과.
-테스트는 실제 Unity가 아닌 loopback 테스트 서버와 FastAPI TestClient를 사용했다. 테스트 라이브러리의 httpx 사용 중단 예정 경고 1개가 있다.
-
-VR·Agent·하드웨어 팀은 [API·Tool 계약 v1](../docs/AGENT_API_V1.md)을 참고한다.
-
-저장소 루트에서 Python 3.12 환경으로 실행:
+명시적인 실호출 점검:
 
 ```powershell
-python -m pip install -r backend/requirements-contracts.txt
-python -m unittest discover -s backend/tests -v
-python -m backend.export_schemas
+.venv-backend/Scripts/python.exe -m backend.smoke_openai
+.venv-backend/Scripts/python.exe -m backend.smoke_unity
 ```
 
-requirements-contracts.txt는 계약 작업용이며 전체 Backend lockfile이 아니다.
+첫 명령은 OpenAI 실호출만 수행한다. 두 번째는 실제 Unity 점검을 시작한다. 현재 통합 환경의 API 키 미설정으로 실호출은 미실행이다. 기존 동료의 실호출·Unity 시작 기록은 Git 이력에 보존되어 있으며, 당시 전체 주행은 `Marker fallback limit reached: 7.0 m, 30.0 s`로 실패했다. 이 통합에서 주행 제한값은 변경하지 않았다.
+
+API 기준은 [VR_BACKEND_API_V1.md](../docs/VR_BACKEND_API_V1.md)이다. 이전 `store.py`, `unity_client.py`, `diagnosis.py`, `contracts.py`의 Agent 전용 응답 모델은 과거 구현/단독 도구 참고용이며 통합 서버에서 임무를 실행하는 별도 경로가 아니다.
+
+OpenAI API 참고: [공식 Function Calling 문서](https://developers.openai.com/api/docs/guides/function-calling). 엄격한 도구 스키마와 단일 도구 선택을 사용하며 실행 인자는 Backend에서 제한한다.
+
+통합 후 Unity 참조 C# 컴파일과 pip check도 통과했다. 현재 런타임의 OpenAI 키는 미설정이다.

@@ -1,0 +1,34 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "api_version": {
+      "maximum": 1,
+      "minimum": 1,
+      "title": "Api Version",
+      "type": "integer"
+    },
+    "request_id": {
+      "title": "Request Id",
+      "type": "string"
+    },
+    "text": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Text",
+      "type": "string"
+    },
+    "execution_mode": {
+      "const": "simulation",
+      "title": "Execution Mode",
+      "type": "string"
+    }
+  },
+  "required": [
+    "api_version",
+    "request_id",
+    "text",
+    "execution_mode"
+  ],
+  "title": "MissionRequest",
+  "type": "object"
+}

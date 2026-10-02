@@ -31,6 +31,9 @@ namespace MetaMarine.VR
         public string message;
         public string unity_session_id;
         public string updated_at;
+        public string agent_mode;
+        public string[] plan;
+        public PointDiagnosis[] points; // Optional additive v1 field: live point results.
         public bool Terminal => state == "COMPLETED" || state == "FAILED" || state == "CANCELLED";
         public void Validate()
         {
@@ -40,6 +43,7 @@ namespace MetaMarine.VR
                 execution_mode != "simulation" || data_mode != "offline_csv_replay" ||
                 total_points != 4 || completed_points < 0 || completed_points > total_points ||
                 (state == "CANCELLED" && !stop_confirmed)) throw new FormatException("Invalid mission snapshot");
+            if (points != null) MissionReport.ValidatePoints(points);
         }
     }
     [Serializable] public sealed class ModelDiagnosis
@@ -59,6 +63,10 @@ namespace MetaMarine.VR
         public string status; // SUCCEEDED / FAILED / NOT_EVALUATED
         public string message;
         public ModelDiagnosis[] models;
+        public string source_file_name;
+        public string source_sha256;
+        public int sample_count;
+        public double sampling_frequency;
     }
     [Serializable] public sealed class MissionReport
     {
@@ -74,15 +82,23 @@ namespace MetaMarine.VR
         {
             if (api_version != 1 || mission_id != snapshot.mission_id || state != snapshot.state ||
                 transport_mode != snapshot.transport_mode || execution_mode != "simulation" || data_mode != "offline_csv_replay" ||
-                points == null || points.Length > 4 || points.Select(p => p.point).Distinct().Count() != points.Length)
+                points == null)
                 throw new FormatException("Invalid report");
+            ValidatePoints(points);
+            if (state == "COMPLETED" && (points.Length != 4 || points.Any(p => p.status != "SUCCEEDED")))
+                throw new FormatException("Incomplete completed report");
+        }
+        public static void ValidatePoints(PointDiagnosis[] points)
+        {
+            if (points.Length > 4 || points.Any(p => p == null) || points.Select(p => p.point).Distinct().Count() != points.Length)
+                throw new FormatException("Invalid points");
             foreach (var point in points)
             {
                 string[] names = { "inspect_point_A1", "inspect_point_A2", "inspect_point_B2", "inspect_point_B1" };
                 if (!names.Contains(point.point) || point.equipment_id != (point.point.Contains("_A") ? "A" : "B") ||
                     !new[] { "SUCCEEDED", "FAILED", "NOT_EVALUATED" }.Contains(point.status)) throw new FormatException("Invalid point");
                 if (point.status != "SUCCEEDED") continue;
-                if (point.models == null || point.models.Length != 4 || point.models.Select(m => m.key).Distinct().Count() != 4)
+                if (point.models == null || point.models.Length != 4 || point.models.Any(m => m == null) || point.models.Select(m => m.key).Distinct().Count() != 4)
                     throw new FormatException("Four independent diagnoses required");
                 foreach (var model in point.models)
                     if (!new[] { "axis", "bearing", "belt", "rotating" }.Contains(model.key) ||
@@ -90,8 +106,6 @@ namespace MetaMarine.VR
                         model.threshold != 0.5 || model.abnormal != (model.abnormal_probability >= model.threshold))
                         throw new FormatException("Invalid diagnosis");
             }
-            if (state == "COMPLETED" && (points.Length != 4 || points.Any(p => p.status != "SUCCEEDED")))
-                throw new FormatException("Incomplete completed report");
         }
     }
 }

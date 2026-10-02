@@ -115,3 +115,7 @@ tools/diagnosis/__pycache__/
 tools/voice/models/
 tools/voice/__pycache__/
 tools/mission_mock/__pycache__/
+.venv-backend/
+backend/**/__pycache__/
+backend/.pytest_cache/
+backend/runtime/

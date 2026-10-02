@@ -1,0 +1,2 @@
+# Compatibility entry; one integrated environment.
+-r requirements.txt

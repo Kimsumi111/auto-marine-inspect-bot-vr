@@ -1,5 +1,7 @@
 # 공유 개발 컨텍스트
 
+현재 상태: 2026-10-02 VR·Agent 단일 Backend 통합. 공개 계약은 VR_BACKEND_API_V1.md, 실행은 backend.main:app/8767. 이전 단계 기록은 아래 이력으로 보존한다.
+
 기준일: 2026-10-02. 현재 저장소의 코드와 설정을 읽어 작성했다. Unity Play, VR 장치, 실제 하드웨어 및 전체 E2E 실행 성공을 이번 문서 작성에서 검증하지 않았다.
 
 ## 목표와 담당
@@ -112,3 +114,15 @@ TCP의 `mission_start`는 A+B 전체 임무만 시작한다. A 전용 시작 함
 새 Play 재검증: `Marker fallback limit reached: 7.0 m, 30.0 s`를 실제 이벤트에서 확인했다. `NavigationCoordinator.UpdateStraightToNextMarker`의 도착 확인 전 fallback 제한으로 실패했으며, 마커를 관측하지 못한 구체적인 원인은 미확정이다. 정지 후 Idle 확인 성공, 진단 지점 0개이다.
 
 2026-10-02: `backend/smoke_unity.py` 실제 Backend·Unity E2E 실행 도구를 추가했다. 준비 상태 확인 후 A+B 명령을 접수하고 결과를 조회한다. 실제 Backend HTTP 기동 및 Unity 미연결 시 접수 차단만 검증했으며, Unity 주행은 아직 미검증이다.
+
+## 2026-10-02 pull 충돌 통합
+
+원격 Agent 구현은 그대로 보존하고, 로컬 VR 고정 A+B 서버는 `backend/vr_main.py`, CSV 실행기는 `backend/vr_diagnosis.py`로 분리했다. 실행·의존성 안내는 `backend/README-VR.md`이다. 기존 로컬 CSV 테스트 20개 및 Unity 참조 컴파일 통과 기록은 해당 구현에 대한 것이며 원격 Agent의 전체 E2E 검증을 뜻하지 않는다. 두 서버는 Unity TCP를 동시에 소유할 수 없다.
+
+분리 후 재검증: VR 테스트 20개, 원격 계약·런타임 테스트 11개 통과. 원격 Agent 테스트는 현재 로컬 환경의 LangGraph 미설치로 수집 단계에서 중단되어 미검증이다. OpenAI 호출이나 새 Unity 주행은 수행하지 않았다.
+
+## 2026-10-02 단일 Backend 통합
+
+동료 OpenAIModel·LangGraph의 계획/도구 선택과 VR 임무 서비스의 복구·취소·진단을 연결했다. 두 실행 경로는 같은 앱이다. 정지 미확인 잠금, 재시도 제한, 미판정 FAILED 기준을 통일했다. 기본 OpenAI 모드에서 키가 없으면 미접수 503이며 고정 모드로 자동 대체하지 않는다.
+
+통합 테스트 46개 통과. LLM·Unity는 모의 입력이며 CSV 추론은 실제 저장 파일·모델을 사용한 테스트도 포함한다. API 키가 없는 현재 환경에서는 실제 OpenAI 호출·Unity 네 지점 E2E·Quest 검증은 하지 않았다. 주행 마커 fallback 실패는 별도 과제로 남아 있다.

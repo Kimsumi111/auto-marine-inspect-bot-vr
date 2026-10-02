@@ -69,12 +69,13 @@ namespace MetaMarine.VR
             if (head.enabled)
             {
                 string report = "";
-                if (api.Report != null)
+                var points = api.Report?.points ?? api.Snapshot?.points;
+                if (points != null && points.Length > 0)
                 {
-                    int pages = api.Report.points.Length + 1;
+                    int pages = points.Length + 1;
                     int selected = resultPage % pages;
                     report = "\n결과 " + (selected + 1) + "/" + pages + "\n" +
-                        (selected == 0 ? Clip(api.Report.summary, 240) : PointText(api.Report.points[selected - 1]));
+                        (selected == 0 ? Clip(api.Report?.summary ?? api.Snapshot?.message, 240) : PointText(points[selected - 1]));
                 }
                 hudText.text = "설비 점검 | " + Mode() + "\n" + StateText() + "\n" + Clip(api.Notice, 110) +
                     "\n명령: " + Clip(draft, 120) + "\n" + (voice != null ? Clip(voice.StatusSummary, 150) : "") +
@@ -84,7 +85,9 @@ namespace MetaMarine.VR
         }
         private static string Clip(string text, int max) => string.IsNullOrEmpty(text) ? "" : text.Length <= max ? text : text.Substring(0, max) + "…";
         private string Mode() => api.Snapshot?.transport_mode == "mock"
-            ? "모의 서버 · 실제 이동/진단 아님" : "Unity 시뮬레이션 · 저장 CSV 진단";
+            ? "모의 서버 · 실제 이동/진단 아님" :
+            (api.Snapshot?.agent_mode == "openai" ? "AI Agent · " : api.Snapshot?.agent_mode == "fixed_ab" ? "고정 명령 테스트 · " : "") +
+            "Unity 시뮬레이션 · 저장 CSV 진단";
         private string StateText()
         {
             var state = api.Snapshot;
@@ -107,6 +110,7 @@ namespace MetaMarine.VR
                 string title = model.key switch { "axis" => "축 정렬", "bearing" => "베어링", "belt" => "벨트", "rotating" => "회전체", _ => model.key };
                 text.AppendLine(title + ": " + (model.abnormal ? "이상" : "정상") + " · 이상 확률 " + model.abnormal_probability.ToString("P1"));
             }
+            if (point.sample_count > 0) text.AppendLine("저장 CSV · " + point.sample_count + " 샘플 / " + point.sampling_frequency.ToString("F0") + " Hz");
             return text.ToString();
         }
         private void OnGUI()
@@ -124,6 +128,8 @@ namespace MetaMarine.VR
             GUILayout.Label("설비 A + B 점검 | " + Mode(), label);
             GUILayout.Label(StateText(), label);
             GUILayout.Label(api.Notice, label);
+            if (api.Snapshot?.plan != null && api.Snapshot.plan.Length > 0)
+                GUILayout.Label("Agent 계획: " + string.Join(" → ", api.Snapshot.plan), label);
             GUI.enabled = api.CanStart;
             draft = GUILayout.TextArea(draft, 500, input, GUILayout.Height(70));
             GUI.enabled = api.CanStart || (api.Pending && !api.Sending);
@@ -137,10 +143,11 @@ namespace MetaMarine.VR
                 if (GUILayout.Button("녹음 시작/종료 (A / F8)", button)) voice.ToggleRecording();
                 if (GUILayout.Button("마이크 변경 (X / F7)", button)) voice.CycleMicrophone();
             }
-            if (api.Report != null)
+            var points = api.Report?.points ?? api.Snapshot?.points;
+            if (points != null && points.Length > 0)
             {
-                GUILayout.Space(12); GUILayout.Label(api.Report.summary, label);
-                foreach (var point in api.Report.points) GUILayout.Label(PointText(point), label);
+                GUILayout.Space(12); GUILayout.Label(api.Report?.summary ?? "지점별 진단 진행", label);
+                foreach (var point in points) GUILayout.Label(PointText(point), label);
                 GUILayout.Label("확률은 모델별 독립 결과입니다. 실제 센서 측정 결과가 아닙니다.", label);
             }
             GUILayout.Space(12); GUILayout.Label("Backend 주소 (모의 서버: http://127.0.0.1:8877)", label);

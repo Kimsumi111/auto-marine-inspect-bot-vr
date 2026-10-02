@@ -94,7 +94,7 @@ namespace MetaMarine.VR
             yield return Request("POST", "/mission", JsonConvert.SerializeObject(submitted), (code, body) =>
             {
                 if (code == 200 || code == 202) Accept(body, submitted.request_id);
-                else if (code == 400 || code == 422 || code == 409)
+                else if (code == 400 || code == 422 || code == 409 || KnownNotAccepted(code, body))
                 {
                     // These responses contractually mean no new mission was created.
                     Notice = Error(body, "요청 거절"); pending = null; ClearSaved();
@@ -193,6 +193,16 @@ namespace MetaMarine.VR
         {
             try { return JsonConvert.DeserializeObject<MissionErrorResponse>(json)?.error?.message ?? fallback; }
             catch (Exception) { return fallback; }
+        }
+        private static bool KnownNotAccepted(long status, string json)
+        {
+            if (status != 503) return false;
+            try
+            {
+                var code = JsonConvert.DeserializeObject<MissionErrorResponse>(json)?.error?.code;
+                return code == "agent_unavailable" || code == "unity_unavailable";
+            }
+            catch (Exception) { return false; }
         }
         private void OnDisable()
         {

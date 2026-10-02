@@ -1,107 +1,256 @@
 import asyncio
-from datetime import datetime, timezone
+import json
+import time
 from pathlib import Path
-import unittest
-from backend.agent import AgentRunner
+import pytest
+from fastapi.testclient import TestClient
+from backend.main import create_app
 from backend.llm import ParsedPlan
-from backend.main import MissionService
-from backend.store import Store
-from backend.diagnosis import DiagnosisRunner
-from backend.contracts import CreateMissionRequest, UnityState, InspectionRecord, CommandReceipt, DiagnosisResult
+from backend.vr_diagnosis import DiagnosisError, DiagnosisRunner
+from test_backend import FakeLink, body, wait_state
+from test_diagnosis import events, ControlledDiagnosis
 
 
 class Model:
-    def __init__(self,targets=None):
-        self.targets = targets or ["A","B"]
-    async def plan(self,command):
-        return ParsedPlan(task="inspection",targets=self.targets,steps=["상태 확인","점검","진단","보고"])
-    async def choose(self,observation,allowed):
-        return next(iter(allowed)),"테스트 Observation 기반 선택"
+    def __init__(self, targets=None, block=None, retry=True):
+        self.targets = ["A", "B"] if targets is None else targets
+        self.block, self.retry = block, retry
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.observations = []
+
+    async def plan(self, text):
+        if self.block == "plan":
+            self.entered.set()
+            await self.release.wait()
+        return ParsedPlan(task="inspection", targets=self.targets, steps=["상태 확인", "점검", "진단", "보고"])
+
+    async def choose(self, observation, allowed):
+        self.observations.append(observation)
+        if self.block in allowed:
+            self.entered.set()
+            await self.release.wait()
+        if "retry_diagnosis" in allowed and self.retry:
+            return "retry_diagnosis", "같은 파일 분석 재시도"
+        return next(iter(allowed)), "실제 결과 기반 선택"
 
 
-class Unity:
-    timeout=0.2
-    revision=1
-    def __init__(self):
-        self.started=False
-        self.commands=[]
-    def state(self):
-        return UnityState(connected=True,session_id="s1",state="Completed" if self.started else "Idle",
-            can_start=not self.started,stale=False,observed_at=datetime.now(timezone.utc))
-    async def command(self,action,session):
-        self.commands.append(action)
-        self.started=True
-        return CommandReceipt(command_id="c1",session_id=session,acknowledged=True,outcome="applied")
-    def inspections(self):
-        return [(InspectionRecord(inspection_id=f"i{i}",session_id="s1",equipment_id=point[14],
-            point=point,completed_at=datetime.now(timezone.utc),data_available=True),"hidden.csv","")
-            for i,point in enumerate(["inspect_point_A1","inspect_point_A2","inspect_point_B2","inspect_point_B1"])]
+class Diagnosis(ControlledDiagnosis):
+    def __init__(self, failures=0):
+        super().__init__()
+        self.release.set()
+        self.failures = failures
+        self.attempts = 0
+
+    async def run(self, path):
+        self.attempts += 1
+        if self.attempts <= self.failures:
+            raise DiagnosisError("inference_failed")
+        return await super().run(path)
 
 
-class Diagnosis:
-    def __init__(self,fail_once=False):
-        self.calls=0
-        self.fail_once=fail_once
-    async def run(self,i,path):
-        self.calls+=1
-        if self.fail_once and self.calls==1:
-            raise ValueError("temporary failure")
-        return DiagnosisResult(inspection_id=i,file_name="x.csv",sample_count=1024,sampling_frequency=1000.0,
-            results=[dict(key=k,abnormal_probability=0.6,abnormal=True,model_sha256="a"*64)
-                     for k in ["axis","bearing","belt","rotating"]])
+def submit(client):
+    request = body("A와 B 상태를 확인하고 결과를 알려줘")
+    response = client.post("/mission", json=request)
+    assert response.status_code == 202, response.text
+    return response.json()["mission_id"], request
 
 
-class AgentTests(unittest.IsolatedAsyncioTestCase):
-    async def test_cancel_during_planning_prevents_late_start(self):
-        entered=asyncio.Event();release=asyncio.Event()
-        class SlowModel(Model):
-            async def plan(self,command):
-                entered.set()
-                await release.wait()
-                return await super().plan(command)
-        store=Store(":memory:");unity=Unity();service=MissionService(store,unity)
-        runner=AgentRunner(service,SlowModel(),Diagnosis())
-        mid=(await service.create(CreateMissionRequest(request_id="r1",command="점검"))).mission_id
-        task=asyncio.create_task(runner.run(mid,"점검"))
-        await entered.wait()
-        await service.cancel(mid)
-        release.set()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-        self.assertEqual(service.get(mid).status.value,"CANCELLED")
-        self.assertEqual(unity.commands,[])
-        store.close()
+def entered(client, model):
+    client.portal.call(lambda: asyncio.wait_for(model.entered.wait(), 3))
 
-    async def test_real_diagnosis_cli_on_original_csv(self):
-        path=next((Path(__file__).resolve().parents[2]/"data/vibration/2.2kW/L-DSF-01").rglob("*.csv"))
-        result=await DiagnosisRunner().run("real-test",str(path))
-        self.assertEqual(len(result.results),4)
-        self.assertEqual(result.mode,"offline_csv_replay")
-        self.assertGreaterEqual(result.sample_count,100)
 
-    async def test_full_graph_with_retry_and_no_duplicate_inspections(self):
-        store=Store(":memory:");unity=Unity();service=MissionService(store,unity)
-        diag=Diagnosis(fail_once=True)
-        runner=AgentRunner(service,Model(),diag)
-        mid=(await service.create(CreateMissionRequest(request_id="r1",command="A+B 점검"))).mission_id
-        await runner.run(mid,"A+B 점검")
-        snapshot=service.get(mid)
-        self.assertEqual(snapshot.status.value,"COMPLETED")
-        self.assertEqual(len(snapshot.assessments),4)
-        self.assertEqual(diag.calls,5)
-        self.assertEqual(unity.commands,["mission_start"])
-        self.assertTrue(any(e["kind"]=="report" for e in store.events(mid)))
-        self.assertNotIn("hidden.csv",str(store.events(mid)))
-        store.close()
+def test_graph_retry_report_and_recovery(tmp_path):
+    link, model, diagnosis = FakeLink(), Model(), Diagnosis(failures=1)
+    path = tmp_path / "mission.db"
+    with TestClient(create_app(path, link, diagnosis, model=model, enable_agent=True)) as client:
+        mid, req = submit(client)
+        wait_state(client, mid, "EXECUTING")
+        client.portal.call(lambda: link.emit(state="Completed", canStart=False, inspections=events()))
+        completed = wait_state(client, mid, "COMPLETED")
+        assert completed["agent_mode"] == "openai" and completed["plan"]
+        assert diagnosis.attempts == 5
+        assert len(link.sent) == 1
+        assert client.post("/mission", json=req).status_code == 200
+        report = client.get(f"/mission/{mid}/result").json()
+        assert all(p["status"] == "SUCCEEDED" for p in report["points"])
+        log = client.get(f"/mission/{mid}/events").json()["events"]
+        assert {"plan", "decision", "tool_result", "diagnosis", "report"} <= {e["kind"] for e in log}
+        assert "fixture.csv" not in json.dumps(model.observations)
+    with TestClient(create_app(path, FakeLink(), enable_agent=False)) as client:
+        assert client.get("/mission/by-request/" + req["request_id"]).json()["state"] == "COMPLETED"
+        assert client.get(f"/mission/{mid}/result").json() == report
 
-    async def test_unsupported_or_unknown_target_never_moves(self):
-        for targets,code in [(["A"],"unsupported_targets"),(["C"],"unknown_equipment")]:
-            store=Store(":memory:");unity=Unity();service=MissionService(store,unity)
-            runner=AgentRunner(service,Model(targets),Diagnosis())
-            mid=(await service.create(CreateMissionRequest(request_id="r1",command="점검"))).mission_id
-            await runner.run(mid,"점검")
-            self.assertEqual(service.get(mid).error.code.value,code)
-            self.assertEqual(unity.commands,[])
-            store.close()
+
+@pytest.mark.parametrize("targets", [["A"], ["C"], ["A", "A"], []])
+def test_unsupported_targets_do_not_start(tmp_path, targets):
+    link = FakeLink()
+    with TestClient(create_app(tmp_path / "db", link, Diagnosis(), model=Model(targets), enable_agent=True)) as client:
+        mid, _ = submit(client)
+        assert "unsupported_goal" in wait_state(client, mid, "FAILED")["message"]
+        assert not link.sent
+
+
+def test_cancel_planning_never_starts_later(tmp_path):
+    link, model = FakeLink(), Model(block="plan")
+    with TestClient(create_app(tmp_path / "db", link, Diagnosis(), model=model, enable_agent=True)) as client:
+        mid, _ = submit(client)
+        entered(client, model)
+        assert client.post(f"/mission/{mid}/cancel", json={}).json()["state"] == "CANCELLED"
+        client.portal.call(model.release.set)
+        assert not link.sent
+
+
+def test_missing_key_rejects_without_pending_record(tmp_path, monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    link = FakeLink()
+    with TestClient(create_app(tmp_path / "db", link, enable_agent=True)) as client:
+        req = body()
+        response = client.post("/mission", json=req)
+        assert response.status_code == 503
+        assert response.json()["error"]["code"] == "agent_unavailable"
+        assert client.get("/mission/by-request/" + req["request_id"]).status_code == 404
+        assert not link.sent
+
+
+def test_lost_start_ack_locks_and_allows_stop_retry(tmp_path):
+    link = FakeLink()
+    link.lose_ack = True
+    with TestClient(create_app(tmp_path / "db", link, Diagnosis(), model=Model(), enable_agent=True)) as client:
+        mid, req = submit(client)
+        assert wait_state(client, mid, "FAILED")["requires_attention"]
+        assert client.post("/mission", json=body()).status_code == 409
+        assert client.post("/mission", json=req).status_code == 200
+        link.lose_ack = False
+        client.portal.call(lambda: link.emit(state="FollowingLane", canStart=False))
+        assert client.post(f"/mission/{mid}/cancel", json={}).status_code == 202
+        client.portal.call(lambda: link.emit(state="Idle", canStart=False))
+        assert wait_state(client, mid, "CANCELLED")["stop_confirmed"]
+        assert [a for a, _, _ in link.sent] == ["mission_start", "mission_stop"]
+
+
+def test_fault_during_llm_diagnosis_stops_without_waiting(tmp_path):
+    link, model = FakeLink(), Model(block="diagnose_inspection")
+    with TestClient(create_app(tmp_path / "db", link, Diagnosis(), model=model, enable_agent=True)) as client:
+        mid, _ = submit(client)
+        wait_state(client, mid, "EXECUTING")
+        client.portal.call(lambda: link.emit(state="FollowingLane", canStart=False, inspections=events()[:1]))
+        entered(client, model)
+        client.portal.call(lambda: link.emit(state="Fault", detail="Marker fallback limit reached"))
+        wait_state(client, mid, "CANCELLING")
+        client.portal.call(lambda: link.emit(state="Idle", canStart=False))
+        assert wait_state(client, mid, "FAILED")["stop_confirmed"]
+        assert any(e["kind"] == "unity_fault" for e in client.get(f"/mission/{mid}/events").json()["events"])
+        client.portal.call(model.release.set)
+        assert client.get(f"/mission/{mid}/result").json()["points"][0]["status"] != "SUCCEEDED"
+
+
+def test_failed_diagnosis_never_completes(tmp_path):
+    with TestClient(create_app(tmp_path / "db", FakeLink(), Diagnosis(failures=20), model=Model(), enable_agent=True)) as client:
+        mid, _ = submit(client)
+        wait_state(client, mid, "EXECUTING")
+        link = client.app.state.unity
+        client.portal.call(lambda: link.emit(state="Completed", canStart=False, inspections=events()))
+        final = wait_state(client, mid, "FAILED")
+        assert all(p["status"] == "FAILED" for p in final["points"])
+
+
+def test_cancel_during_report_has_no_late_completion(tmp_path):
+    model, link = Model(block="report_results"), FakeLink()
+    with TestClient(create_app(tmp_path / "db", link, Diagnosis(), model=model, enable_agent=True)) as client:
+        mid, _ = submit(client)
+        wait_state(client, mid, "EXECUTING")
+        client.portal.call(lambda: link.emit(state="Completed", canStart=False, inspections=events()))
+        entered(client, model)
+        final = client.post(f"/mission/{mid}/cancel", json={}).json()
+        assert final["state"] == "CANCELLED" and final["stop_confirmed"]
+        client.portal.call(model.release.set)
+        assert client.get(f"/mission/{mid}").json() == final
+
+
+def test_agent_with_real_csv_and_models(tmp_path):
+    runner = DiagnosisRunner()
+    root = Path(__file__).resolve().parents[2]
+    csv = next((root / "data/vibration/2.2kW/L-DSF-01").rglob("*.csv"))
+    link = FakeLink()
+    with TestClient(create_app(tmp_path / "db", link, runner, model=Model(), enable_agent=True)) as client:
+        mid, _ = submit(client)
+        wait_state(client, mid, "EXECUTING")
+        client.portal.call(lambda: link.emit(state="Completed", canStart=False, inspections=events(csv)))
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            snapshot = client.get(f"/mission/{mid}").json()
+            if snapshot["state"] in {"FAILED", "COMPLETED"}:
+                break
+            time.sleep(.05)
+        assert snapshot["state"] == "COMPLETED", snapshot
+        assert all(len(p["models"]) == 4 and p["sample_count"] >= 100 for p in snapshot["points"])
+
+
+def test_cancel_during_start_ack_does_not_wait_for_ack(tmp_path):
+    class SlowLink(FakeLink):
+        def __init__(self):
+            super().__init__()
+            self.entered = asyncio.Event()
+            self.release = asyncio.Event()
+        async def command(self, action, cid, session):
+            self.sent.append((action, cid, session))
+            if action == "mission_start":
+                self.entered.set()
+                await self.release.wait()
+            return dict(ok=True)
+    link = SlowLink()
+    with TestClient(create_app(tmp_path / "db", link, Diagnosis(), model=Model(), enable_agent=True)) as client:
+        mid, _ = submit(client)
+        client.portal.call(lambda: asyncio.wait_for(link.entered.wait(), 3))
+        response = client.post(f"/mission/{mid}/cancel", json={})
+        assert response.json()["state"] == "CANCELLING"
+        client.portal.call(lambda: link.emit(state="Idle", canStart=False))
+        wait_state(client, mid, "CANCELLED")
+        client.portal.call(link.release.set)
+        assert [a for a, _, _ in link.sent] == ["mission_start", "mission_stop"]
+
+
+def test_unity_session_change_during_plan_never_starts(tmp_path):
+    model, link = Model(block="plan"), FakeLink()
+    with TestClient(create_app(tmp_path / "db", link, Diagnosis(), model=model, enable_agent=True)) as client:
+        mid, _ = submit(client)
+        entered(client, model)
+        client.portal.call(lambda: link.emit(sessionId="new-play"))
+        wait_state(client, mid, "FAILED")
+        client.portal.call(model.release.set)
+        assert not link.sent
+
+
+def test_model_failure_before_start_is_recorded(tmp_path):
+    class BrokenModel(Model):
+        async def plan(self, text):
+            raise RuntimeError("simulated API failure")
+    link = FakeLink()
+    with TestClient(create_app(tmp_path / "db", link, Diagnosis(), model=BrokenModel(), enable_agent=True)) as client:
+        mid, _ = submit(client)
+        assert not wait_state(client, mid, "FAILED")["requires_attention"]
+        assert not link.sent
+        assert client.get(f"/mission/{mid}/events").json()["events"][-1]["kind"] == "agent_error"
+
+
+def test_one_app_alias_and_legacy_request_rejected(tmp_path):
+    from backend.main import app
+    from backend.vr_main import app as alias
+    assert app is alias
+    with TestClient(create_app(tmp_path / "db", FakeLink(), enable_agent=False)) as client:
+        assert client.post("/mission", json={"request_id": "old", "command": "A+B"}).status_code == 422
+
+
+def test_restart_does_not_replay_inflight_agent(tmp_path):
+    model, link, path = Model(block="diagnose_inspection"), FakeLink(), tmp_path / "db"
+    with TestClient(create_app(path, link, Diagnosis(), model=model, enable_agent=True)) as client:
+        mid, req = submit(client)
+        wait_state(client, mid, "EXECUTING")
+        client.portal.call(lambda: link.emit(state="FollowingLane", canStart=False, inspections=events()[:1]))
+        entered(client, model)
+    second = FakeLink()
+    with TestClient(create_app(path, second, Diagnosis(), model=Model(), enable_agent=True)) as client:
+        snapshot = client.post("/mission", json=req).json()
+        assert snapshot["state"] == "FAILED" and snapshot["requires_attention"]
+        assert not second.sent

@@ -1,3 +1,9 @@
+# 이전 Agent API 계약 — 통합 후 참고 자료
+
+**2026-10-02 아래 API는 통합으로 대체됐다. 신규 구현 기준으로 사용하지 않는다.** 현재 공개 계약은 [VR_BACKEND_API_V1.md](VR_BACKEND_API_V1.md), 결정 근거는 [API_INTEGRATION_GAP.md](API_INTEGRATION_GAP.md)이다. 실행은 `backend.main:app`/8767이며 이전 command/status/assessments 요청·응답은 지원하지 않는다. 아래 모델과 schemas는 과거 설계 비교용으로 보존한다.
+
+---
+
 # Agent API・Tool 계약 v1
 
 2026-10-02. **계약·FastAPI·Unity TCP·SQLite·LangGraph Agent·OpenAI·진단 CLI·완료 처리 구현 완료**이다. 실제 Unity 주행을 포함한 E2E는 미검증이다.

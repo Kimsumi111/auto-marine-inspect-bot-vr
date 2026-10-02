@@ -1,8 +1,18 @@
-# VR ↔ Backend REST v1 — 확정 계약
+# VR ↔ Backend REST v1 — 통합 확정 계약
 
-통합 상태 갱신(2026-10-02): `backend/`의 실제 Agent 서버가 추가됐으나 이 VR 계약과 응답·포트·취소·완료 의미가 다르다. 아래 문서는 현재 VR 클라이언트의 구현 기준이며 Backend 호환 완료를 뜻하지 않는다. [차이 목록](API_INTEGRATION_GAP.md)을 참고한다. 아래의 Backend 미구현 표현은 VR 개발 당시 상태이다.
+2026-10-02: `backend.main:app`/8767로 VR과 OpenAI Agent를 통합했다. `backend.vr_main:app`은 동일 앱 별칭이다. 실행·설정·검증은 `backend/README.md`를 따른다. 모의 서버 8877은 UI 전용이며 Agent·Unity·실제 진단을 실행하지 않는다.
 
-2026-10-02 사용자 요청에 따라 클라이언트 구현 기준을 확정했다. **실제 Backend/Agent는 아직 미구현**이다. 이 문서는 Backend 구현자가 맞춰야 하는 계약이며, 구현 완료를 뜻하지 않는다. `tools/mission_mock`는 UI 검증용이며 Unity TCP/LLM/진단 함수를 호출하지 않는다.
+기본 `openai` 모드는 자연어 목표를 해석하되 실행은 A+B 전체 점검만 허용한다. A 단독/미등록 설비를 A+B로 확대하지 않는다. `fixed_ab`는 명시적인 통신 시험 모드이며 기존 세 문구만 받는다. 키 누락을 고정 모드로 숨기지 않는다.
+
+MissionSnapshot의 추가 선택 필드 `agent_mode`는 openai/fixed_ab이고 `plan`은 Agent가 반환한 계획 문자열 배열이다. 기존 기록·모의 응답에서는 생략될 수 있다. 계획은 고정 A+B 실행 범위 안의 설명이며 임의 경로/코드 실행을 허용하지 않는다. Unity UI는 모드와 계획을 표시한다.
+
+### v1 추가 필드: 진행 중 지점별 진단
+
+MissionSnapshot에 선택 필드 `points: PointDiagnosis[]`를 추가했다. MissionReport와 같은 지점 형식이며 아직 이벤트가 없으면 빈 배열이다. 구형 모의 서버가 생략해도 클라이언트는 허용한다. `completed_points`는 도착/점검 이벤트 수이고 추론 성공 수가 아니다.
+
+각 지점은 기존 필드에 선택 메타데이터 `source_file_name`, `source_sha256`, `sample_count`, `sampling_frequency`를 제공한다. 절대 파일 경로는 반환하지 않는다. 대기/실행 중은 NOT_EVALUATED, 성공은 SUCCEEDED, 오류는 FAILED이다. 취소로 미완료인 지점은 NOT_EVALUATED와 사유를 보존한다. 지점 결과가 바뀌면 snapshot revision도 증가한다.
+
+Unity Completed 후 남은 추론은 DIAGNOSING이며, 네 지점 모두 SUCCEEDED일 때만 COMPLETED이다. 이상 검출도 성공적으로 완료된 진단이다. 한 지점이라도 진단에 실패하면 전체 FAILED이며 성공한 지점 결과는 남긴다. 이미 Unity 종료가 확인된 DIAGNOSING에서 취소하면 추가 TCP 정지 명령 없이 남은 추론을 중단하고 CANCELLED/stop_confirmed=true가 된다.
 
 ## 연결과 책임
 
@@ -18,7 +28,7 @@
 - `request_id`: 클라이언트 생성 UUID. `mission_id`: Backend 생성 UUID. Unity `sessionId`, TCP `commandId`와 별개.
 - Backend는 request_id와 원문 요청, mission_id를 **SQLite에 원자적으로 영속화한 뒤** 실행을 예약한다. 동일 ID+동일 요청은 기존 임무를 반환하고 Tool을 다시 실행하지 않는다. 동일 ID+다른 요청은 409 `id_conflict`.
 - 동일 요청 조회·재전송은 새 임무로 간주하지 않는다. 영속화 범위는 Backend 재시작을 포함하며, 이 MVP에는 자동 기록 만료가 없다.
-- POST timeout/5xx/잘못된 성공 응답은 **접수 여부 미확인**. 클라이언트는 새 ID로 재시작하지 않고 request_id로 조회한다. 사용자가 재전송을 누르면 동일 ID·동일 본문만 재전송한다.
+- POST timeout/알 수 없는 5xx/잘못된 성공 응답은 **접수 여부 미확인**. 클라이언트는 새 ID로 재시작하지 않고 request_id로 조회한다. 사용자가 재전송을 누르면 동일 ID·동일 본문만 재전송한다.
 - 상태 조회 404만으로 미접수를 확정하거나 새 ID를 만들지 않는다. 이전 POST가 처리 중일 수 있다.
 - Unity TCP 재연결 시 미확인 `mission_start`를 자동 재전송하지 않는다. Backend가 저장된 상관관계/세션/telemetry로 확인한다.
 - 클라이언트는 pending 요청과 추적 ID를 로컬 PlayerPrefs에 보존한다(평문 명령 포함, 음성 파일 제외). 정상적인 terminal 결과 수신 및 `requires_attention=false`일 때 지운다. Play 재시작은 조회만 복원하고 자동 실행하지 않는다.
@@ -32,6 +42,7 @@
 | POST | `/mission` | 202 신규 / 200 중복 | MissionSnapshot 반환 |
 | GET | `/mission/by-request/{request_id}` | 200 | MissionSnapshot; 복구 조회, 이 경로를 동적 mission_id보다 먼저 등록 |
 | GET | `/mission/{mission_id}` | 200 | MissionSnapshot; 1초 polling, LLM 호출 없음 |
+| GET | `/mission/{mission_id}/events` | 200 | 계획·선택·진단·Fault·보고 이벤트; polling으로 LLM을 호출하지 않음 |
 | GET | `/mission/{mission_id}/result` | 200 | MissionReport; 미완료는 409 result_not_ready |
 | POST | `/mission/{mission_id}/cancel` | 202 진행 / 200 이미 terminal | 본문 `{}`, MissionSnapshot; 반복 호출은 멱등 |
 
@@ -127,7 +138,8 @@ points는 지점 중복 없이 0~4개. SUCCEEDED / FAILED / NOT_EVALUATED 상태
 - 422 invalid_request: schema 오류.
 - 409 id_conflict / mission_busy / unity_restart_required / result_not_ready.
 - 404 not_found: 조회할 ID 없음.
-- 503 unity_unavailable / service_unavailable: 클라이언트는 접수 여부를 재확인한다.
+- 503 agent_unavailable / unity_unavailable: 임무 생성 전 거부이며 새 기록이 없다. Unity는 이 두 명시적 코드에 한해서 입력 잠금을 해제한다. 같은 요청 ID가 이미 존재하면 이 검사 전에 해당 임무를 반환한다.
+- 기타 5xx/알 수 없는 오류는 접수 미확인으로 보존한다.
 - 자연어의 unsupported_goal은 접수 후 PLANNING에서 FAILED 결과로 보고할 수 있다. Tool 실행은 금지.
 - Pydantic 기본 `detail` 응답을 그대로 노출하지 말고 위 error envelope로 통일한다.
 
@@ -144,3 +156,5 @@ PC: 텍스트 편집/전송 버튼, F5 전송, F6 취소, F8 녹음, F7 마이�
 모의 서버는 메모리 저장이며 재시작 시 기록이 사라진다. 이는 실제 Backend의 SQLite 영속화 요구를 대체하지 않는다. UI에서 pending이 복원되면 같은 요청 재전송으로만 회복한다. 단위 테스트: `python tools/mission_mock/test_server.py`.
 
 2026-10-02 검증: 모의 HTTP 테스트 9개 통과, Unity 참조를 사용한 C# 컴파일 통과. Unity Play에서 텍스트 요청 → 모의 상태 조회 → 4지점 완료와 결과 UI 표시 확인. 별도 모의 요청에서 취소 → CANCELLED/정지 확인 표시도 확인했다. 실제 Backend·LLM·Unity TCP 임무 E2E 및 Quest 장치 검증은 이 변경으로 수행하지 않았다.
+
+통합 검증(2026-10-02): Backend 테스트 46개 통과. 모의 LLM·Unity 이벤트와 실제 저장 CSV/모델 기반 실행을 구분한다. 실계정 API와 Unity 전체 주행·Quest 시연은 아직 미검증이다.

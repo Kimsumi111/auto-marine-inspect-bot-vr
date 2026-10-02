@@ -7,10 +7,12 @@
 
 확정 요청·응답 형식은 [VR_BACKEND_API_V1.md](VR_BACKEND_API_V1.md)를 따른다.
 `MissionContract`, `MissionApiClient`, `MissionPanel`이 텍스트/음성 확인 후 접수, 상태 조회, 취소, 결과 표시를 구현한다.
-`PcVrView`에서 자동 설치한다. 실제 Backend 기본 포트는 8767로 예약했지만 서버는 아직 미구현이다.
+`PcVrView`에서 자동 설치한다. 실제 Backend 8767은 `backend/main.py`로 구현했다. OpenAI/LangGraph 자연어 A+B 목표, 실행·조회·취소, SQLite 복원 및 지점별 CSV 진단·재시도를 지원한다. 실행 방법은 `backend/README.md`를 따른다.
 `tools/mission_mock/server.py`는 별도 8877 포트의 UI 테스트용 서버이며 Unity TCP/Agent/진단을 실행하지 않는다.
 음성 `TranscriptReady`는 입력창만 갱신한다. 사용자가 전송해야 임무를 접수한다.
 이전 요청 ID와 명령문은 복구 조회를 위해 로컬 PlayerPrefs에 임시 보존하며 완료 결과 확인 후 제거한다.
+
+기본 Agent 모드는 자연어를 해석해 A+B만 실행한다. 고정 문구는 명시적 fixed_ab 시험 모드에서만 사용한다. Unity ACK와 완료 이벤트를 구분하고, 주행 중 취소는 같은 세션의 정지 ACK + 새 Idle/canStart=false telemetry로 확인한다. Backend 재시작/연결 끊김은 자동 재출발하지 않고 미확인 상태를 보존한다. Unity Completed와 네 지점 CSV 진단 SUCCEEDED가 모두 확인되면 전체 COMPLETED이다. 진단 오류는 FAILED/미판정이며 모의 확률로 대체하지 않는다. Unity 종료 확인 후에는 오프라인 진단을 계속할 수 있으며, 그 상태의 취소는 남은 진단만 중단한다.
 
 ## Unity TCP v1
 
@@ -89,6 +91,7 @@ key: axis / bearing / belt / rotating
 네 분류기는 독립 결과이며 class 1이 이상이다. 확률을 검증된 통합 신뢰도로 해석하지 않는다.
 CLI 성공은 stdout JSON과 exit 0, 실패는 stderr error JSON과 exit 1이다. 오류를 정상 판정으로 바꾸지 않는다.
 현재 WPF 실행기는 비동기 프로세스, 동시 1건, 45초 timeout을 사용한다.
+Backend의 `backend/vr_diagnosis.py`도 동일 도구를 동시 1건/45초 제한으로 실행한다. 이벤트 ID·지점으로 중복을 제거하며 입력 파일 SHA-256, 모델별 해시와 결과를 저장한다. REST snapshot의 선택 필드 `points`로 진행 중 결과도 제공한다. 상세 추가 필드는 `VR_BACKEND_API_V1.md`를 따른다.
 실제 센서 데이터 지원을 추가할 때는 형식과 출처를 새 계약으로 정의하고 `offline_csv_replay` 의미를 유지한다.
 
 진단 Python 의존성은 `tools/diagnosis/requirements.txt`에 고정되어 있다. PPO 학습 환경과 별도 환경을 권장한다.
@@ -115,3 +118,5 @@ WPF 환경 설정: `SHIP_ROBOT_PROJECT`, `SHIP_DIAGNOSIS_PYTHON`. 상세 실행�
 - 관제 테스트: `gui/MarineMonitor.Tests`; Unity 참조 컴파일: `gui/UnityIntegration.Check`.
 
 테스트별 전제조건은 각 기존 README와 csproj를 확인한다. 이 목록은 테스트 실행 성공 기록이 아니다.
+
+OpenAI Agent와 VR은 `backend.main:app`/8767 단일 서비스다. `backend.vr_main:app`은 같은 앱의 별칭이다. 기존 8000 계약은 대체되었으며 `API_INTEGRATION_GAP.md`를 따른다.

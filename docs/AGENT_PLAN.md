@@ -1,10 +1,10 @@
-# Agent 도입 계획 — 미구현 제안
+# Agent 구현 현황과 후속 계획
 
-기준일: 2026-10-02. v1 계약·FastAPI·Unity TCP·SQLite·LangGraph·OpenAI·진단 실행을 구현했다. 키 설정 시 Agent가 접수를 처리하며 키가 없으면 awaiting_agent로 대기한다. 실제 Unity Play E2E는 미검증이다. 아래 하드웨어 Tool 및 API 제안보다 `docs/AGENT_API_V1.md`의 Unity 우선 v1 계약을 먼저 적용한다.
+2026-10-02: FastAPI·SQLite·TCP·LangGraph·OpenAI와 VR 계약을 단일 서버로 통합했다. 키가 없으면 신규 요청은 503 agent_unavailable이며 대기 임무를 만들지 않는다. 공개 계약은 `VR_BACKEND_API_V1.md`, 실행은 `backend/README.md`를 따른다.
 
-팀 합의와 구현 후 상태를 갱신한다. 현재 계약은 `INTEGRATION_CONTRACTS.md` 참조.
+구현한 범위는 자연어 A+B 목표 해석, 시작/보류 선택, 지점별 CSV 진단·최대 1회 재시도 선택, 실제 수치 보고이다. 주행·취소 감시는 별도 서비스가 담당한다. 모의 LLM/Unity 및 실제 CSV 검증과 실계정·실주행 검증을 구분한다.
 
-원격 VR 구현의 `VR_BACKEND_API_V1.md`와 현재 Backend 계약은 서로 다르다. 직접 연동 완료로 간주하지 않는다. 차이와 후속 조정 범위는 [API_INTEGRATION_GAP.md](API_INTEGRATION_GAP.md) 참조.
+아래 하드웨어 Tool·확장 구조는 후속 제안이며 이미 존재하는 통합 REST 계약을 대체하지 않는다.
 
 사용자는 Unity 우선 개발을 선택했다. 첫 연동 대상은 Unity 시뮬레이터이며 실제 하드웨어 어댑터는 후속 통합 대상이다.
 현재 설비는 A/B로 식별하고 펌프·모터 종류는 미확정이다. 아래 `pump_A` 예시는 확정 ID가 아니며 기존 Unity A/B와 자동 매핑하지 않는다.
@@ -86,3 +86,5 @@ mission_id는 Unity sessionId, TCP commandId와 별도이며 상호 참조를 �
 6. 정상 점검, 다른 설비, 품질 부족, 이동 실패, 이상 경고, 없는 설비, 사용자 취소를 검증한다.
 
 완료 기준은 실제 실행 증거와 기대 결과로 기록한다. 모의 E2E 성공, 실제 하드웨어 E2E 성공, VR 장치 시연 성공을 각각 구분한다.
+
+고정 A+B 시험 모드는 같은 서비스에 명시적으로 설정한다. 별도 Backend를 실행하지 않는다.
