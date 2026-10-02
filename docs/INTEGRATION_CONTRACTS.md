@@ -1,5 +1,16 @@
 # 현재 인터페이스 계약
 
+2026-10-03 Jetbot TCP 순차 통신 추가. 기존 Mission TCP/REST는 변경하지 않았다.
+Unity→Networking TCP 127.0.0.1:19101, Networking→Jetson TCP 19102. 길이 4바이트(big-endian)+UTF-8 JSON.
+Unity 기존 입력에 transport=tcp/duration_ms를 추가하고 Jetson은 version=2/type=control,
+duration_ms/end_session으로 순차 목표 재생한다. TTL 만료/최신값 덮어쓰기는 TCP에 적용하지 않는다.
+Backend ACK는 송신 접수 확인이고 Jetson 실행 완료 확인이 아니다. Jetson 상태/센서 송신 및 실제 제어는 없다.
+기존 VR 시선 계약/진단과 UDP 모드는 보존한다. 24개 테스트와 C# 검증 통과, 실제 장치 E2E는 미검증이다.
+실행/계약/연결 복구·샘플링 제한은 [JETBOT_TCP_GUIDE.md](JETBOT_TCP_GUIDE.md)를 따른다.
+아래 VR UDP 문단은 이전 검증 이력이다.
+
+2026-10-03 VR 시선 진단: JetbotTelemetrySender는 유효한 동일 각도도 주기 송신하고 Gaze Status로 무효 사유를 표시한다. 기존 UDP gaze.valid/yaw_valid/yaw_deg/pitch_deg 계약은 유지하며, Backend는 camera_valid/camera_yaw_valid/pan/tilt로 변환한다. 유효한 0도와 무효 null, 수직 시선의 pitch-only를 구분한다. Unity 참조 컴파일과 Networking 13개 테스트 통과; 실제 HMD/Unity Play/Jetson E2E는 이번 변경에서 미검증. 실제 젯봇 수정은 [JETBOT_GAZE_GUIDE.md](JETBOT_GAZE_GUIDE.md)의 수신 전용 가이드로 제공한다.
+
 2026-10-02 우측 하단 회전 조정: UnderMid(6)→UnderRight(5)→UpperRight(2) 경로 override의 searchTurnCommand를 0.20→0.24(20% 증대)로 변경했다. 씬 생성 도구도 junction=UnderRight 항목에 0.24를 적용한다. 이 값은 회전 명령 강도 상한이며 고정 회전각 증가가 아니다; confidence/새 영상 3개 전환과 전진 명령·계획 yaw·탐색 제한은 기존대로다. 실제 회전/재획득 효과는 새 Play에서 미검증.
 
 2026-10-02 사용자 요청으로 출구 전환 단순화: SearchingExitLane에서 LaneCentre 관측이 LaneFollower.TryGetLaneDetection의 effective confidence/age 기준(기본 confidence 0.30/age 0.20초)을 새 영상 3개(requiredPairFrames)에서 만족하면 바로 FollowingLane으로 전환한다. 별도 pair confidence gate, 경계 파란선 정렬, near/far 각도 계산, 횡오차·계획 yaw 완료 gate는 전환에 요구하지 않는다. 중앙 관측을 유지해 reference 전환으로 생기는 confidence 초기화가 없다. 남은 횡오차/방향 보정은 기존 LaneFollower PD 제어에 맡긴다. 회전 탐색 전진 상수 0.40과 기존 탐색 이동/회전 한도는 유지한다. VisualAlign 상태/설정/핸들러는 호환을 위해 남았으나 현재 출구 탐색 흐름에서 진입하지 않는다. CSV/Console에 confidence confirmed; boundary alignment skipped 사유 및 중앙 confidence 연속 확인 수/영상 age를 기록한다. 기존 새 프레임/제어/로그 회귀 검증과 Unity 참조 컴파일 통과; 변경 후 실제 Play 전환/주행은 미검증.
