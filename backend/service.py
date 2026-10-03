@@ -123,7 +123,19 @@ class MissionService:
             self.finish(job, "FAILED", "unsupported_goal: 현재는 '설비 A와 B를 점검해줘' 고정 명령만 지원합니다. LLM은 아직 미연결입니다.")
             return
         self.touch(job, state="PLANNING", step="unity_precheck", message="Unity A+B 실행 조건 확인")
+        self.select_targets(job, ["A", "B"])
         await self.execute_start(job)
+
+    def select_targets(self, job, targets):
+        if not targets or len(targets) != len(set(targets)) or not set(targets) <= {"A", "B"}:
+            raise ValueError("Unsupported inspection targets")
+        job["targets"] = [t for t in ("A", "B") if t in targets]
+        job["expected_points"] = [p for p, equipment in POINTS.items() if equipment in targets]
+        self.touch(job, total_points=len(job["expected_points"]), targets=job["targets"])
+        self.storage.save(job)
+
+    def expected_points(self, job):
+        return job.get("expected_points", list(POINTS))
 
     async def execute_start(self, job):
         self.active(job)
@@ -135,7 +147,8 @@ class MissionService:
         self.storage.save(job)  # Conservatively assume possible execution after this point.
         try:
             self.event(job, "tool_started", dict(tool="start_inspection", command_id=job["start_command_id"]))
-            ack = await self.link.command("mission_start", job["start_command_id"], job["snapshot"]["unity_session_id"])
+            action = {("A",): "mission_start_a", ("B",): "mission_start_b", ("A", "B"): "mission_start"}[tuple(job.get("targets", ["A", "B"]))]
+            ack = await self.link.command(action, job["start_command_id"], job["snapshot"]["unity_session_id"])
             if job["snapshot"]["state"] not in {"PLANNING", "EXECUTING"}:
                 return
             self.event(job, "tool_result", dict(tool="start_inspection", acknowledged=ack.get("ok") is True))
@@ -209,7 +222,7 @@ class MissionService:
                 if not isinstance(inspection, dict) or inspection.get("id") in job["inspections"]:
                     continue
                 point = inspection.get("point")
-                if point not in POINTS or inspection.get("equipmentId") != POINTS[point] or not inspection.get("id"):
+                if point not in self.expected_points(job) or inspection.get("equipmentId") != POINTS[point] or not inspection.get("id"):
                     continue
                 if any(p["point"] == point for p in job["points"]):
                     continue
@@ -260,14 +273,14 @@ class MissionService:
     def complete_if_ready(self, job):
         if not job.get("unity_completed") or job["snapshot"]["state"] in TERMINAL | {"CANCELLING"}:
             return
-        if len(job["points"]) != 4:
+        if {p["point"] for p in job["points"]} != set(self.expected_points(job)):
             self.finish(job, "FAILED", "Unity 종료 이벤트와 점검 지점 수가 일치하지 않습니다.")
         elif self.diagnosis is None:
             self.finish(job, "FAILED", "진단 실행기가 연결되지 않았습니다.")
         elif any(p["status"] == "NOT_EVALUATED" for p in job["points"]):
             return
         elif any(p["status"] == "FAILED" for p in job["points"]):
-            self.finish(job, "FAILED", "4지점 점검 종료 · 일부 CSV 진단 실패. 미판정 지점을 확인하세요.")
+            self.finish(job, "FAILED", f"{len(self.expected_points(job))}지점 점검 종료 · 일부 CSV 진단 실패. 미판정 지점을 확인하세요.")
         elif self.agent is not None:
             job["results_ready"] = True
         else:
@@ -276,7 +289,7 @@ class MissionService:
     def complete_report(self, job):
         self.active(job)
         abnormal = [p["point"] for p in job["points"] if any(m["abnormal"] for m in p["models"])]
-        summary = "4지점 점검 및 저장 CSV 진단 완료. " + ("이상 검출: " + ", ".join(abnormal) if abnormal else "모든 모델의 판정 기준에서 이상 미검출")
+        summary = f"{len(self.expected_points(job))}지점 점검 및 저장 CSV 진단 완료. " + ("이상 검출: " + ", ".join(abnormal) if abnormal else "모든 모델의 판정 기준에서 이상 미검출")
         self.event(job, "report", dict(summary=summary))
         self.finish(job, "COMPLETED", summary, stopped=True)
 

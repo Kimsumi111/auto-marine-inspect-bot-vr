@@ -27,6 +27,15 @@ namespace MetaMarine.VR
             var anchor = GetComponent<RobotVrAnchor>() ?? gameObject.AddComponent<RobotVrAnchor>();
             anchor.robot = robot.transform;
             anchor.head = headCamera.transform;
+            foreach (var camera in robot.GetComponentsInChildren<Camera>(true))
+                if (camera.name == "front_camera")
+                {
+                    anchor.robotCamera = camera.transform;
+                    headCamera.nearClipPlane = Mathf.Min(camera.nearClipPlane, 0.05f);
+                    break;
+                }
+            if (anchor.robotCamera == null)
+                Debug.LogWarning("Robot VR camera anchor missing: expected jetbot/front_camera", this);
             if (GetComponent<VoiceTranscriptPanel>() == null) gameObject.AddComponent<VoiceTranscriptPanel>();
             if (GetComponent<MissionPanel>() == null) gameObject.AddComponent<MissionPanel>();
         }

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -50,6 +50,15 @@ namespace ShipRobot.Navigation
             if (markerById.Count == 0)
                 RebuildMarkerIndex();
             return markerById.TryGetValue(id, out marker);
+        }
+
+        public bool TryGetEntry(PlantNodeId from, PlantNodeId to, out NavigationMarker entry)
+        {
+            if (!TryGetMarker(to, out entry)) return false;
+            foreach (var candidate in entry.GetComponentsInChildren<NavigationMarker>(true))
+                if (candidate.Role == NavigationMarker.MarkerRole.Entry && candidate.DirectionalEntry && candidate.IncomingNode == from)
+                { entry = candidate; return true; }
+            return true; // Legacy scenes without directional entries.
         }
 
         public List<PlantNodeId> FindShortestPath(PlantNodeId start, PlantNodeId goal)
@@ -133,7 +142,7 @@ namespace ShipRobot.Navigation
 
             foreach (NavigationMarker marker in markers)
             {
-                if (marker == null || marker.Role != NavigationMarker.MarkerRole.Entry)
+                if (marker == null || marker.Role != NavigationMarker.MarkerRole.Entry || marker.DirectionalEntry)
                     continue;
                 if (markerById.ContainsKey(marker.NodeId))
                 {

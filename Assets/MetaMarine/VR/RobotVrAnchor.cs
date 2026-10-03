@@ -9,8 +9,10 @@ namespace MetaMarine.VR
     {
         public Transform robot;
         public Transform head;
+        public Transform robotCamera;
         public Vector3 eyeOffset = new Vector3(0f, 0.65f, 0.25f);
         private Vector3 trackingZero;
+        private Quaternion trackingRotationZero = Quaternion.identity;
         private bool calibrated;
         private InputAction recenter;
         private void OnEnable()
@@ -28,11 +30,15 @@ namespace MetaMarine.VR
             if (!calibrated && UnityEngine.XR.InputDevices.GetDeviceAtXRNode(UnityEngine.XR.XRNode.Head)
                     .TryGetFeatureValue(UnityEngine.XR.CommonUsages.isTracked, out bool tracked) && tracked)
             {
-                trackingZero = head.localPosition;
+                trackingZero = transform.InverseTransformPoint(head.position);
+                trackingRotationZero = Quaternion.Inverse(transform.rotation) * head.rotation;
                 calibrated = true;
             }
-            var yaw = Quaternion.Euler(0, robot.eulerAngles.y, 0);
-            transform.SetPositionAndRotation(robot.position + yaw * (eyeOffset - trackingZero), yaw);
+            // Anchor the neutral HMD pose at the real sensor camera, including its local offset.
+            Quaternion cameraRotation = robotCamera != null ? robotCamera.rotation : Quaternion.Euler(0, robot.eulerAngles.y, 0);
+            Vector3 cameraPosition = robotCamera != null ? robotCamera.position : robot.position + cameraRotation * eyeOffset;
+            Quaternion rigRotation = cameraRotation * Quaternion.Inverse(trackingRotationZero);
+            transform.SetPositionAndRotation(cameraPosition - rigRotation * trackingZero, rigRotation);
         }
         private void OnDisable() { recenter?.Dispose(); recenter = null; }
     }

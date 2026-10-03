@@ -141,7 +141,7 @@ Unity 버전은 `ProjectSettings/ProjectVersion.txt`의 `6000.5.7f1`이다.
 
 근거는 `RobotDashboardIntegration.cs`와 `NavigationCoordinator.cs`이다. 두 지점은 동일 논리 설비에 연결되며 별도 설비 네 개로 취급하지 않는다. 기본 상태는 진단 결과가 아니다.
 현재 `jetbot_env.unity`에는 A1/A2 참조가 있고 B1/B2 참조는 비어 있다. A+B 임무 시작 시 B 점검 지점을 A 지점 복제로 생성한다.
-TCP의 `mission_start`는 A+B 전체 임무만 시작한다. A 전용 시작 함수는 NavigationCoordinator에 있지만 TCP에 노출되지 않았고, B 전용은 경로 계획만 존재하며 해당 점검 실행 함수는 없다.
+TCP의 `mission_start`는 A+B, `mission_start_a`는 A 단독, `mission_start_b`는 B 단독 점검을 시작한다. A/B 단독은 해당 설비 쪽 한 바퀴만 주행하고, A+B는 양쪽을 점검한다.
 현재 점검은 지점 접근 후 지정 시간 대기하고 완료 이벤트를 발생시키는 시뮬레이션이다. 이벤트에 연결되는 진동 파일은 이미 재생 중인 CSV이며 새 측정 수집이 아니다.
 
 1. 실제 로봇·센서 코드 위치, 호출 방식, 완료·정지 계약.
@@ -264,3 +264,27 @@ NFC는 물리 Trigger/실제 리더 대신 XZ 평면의 원형 구역 포함 판
 센서 진단은 읽기 전용 getter로 마지막 샘플을 읽으며 위치 샘플링이나 주행 제어를 변경하지 않는다. nfc_decision은 마지막 실제 검사 결과로, 상태와 함께 해석한다. 루트 Collider가 없으면 하위 시각 모델 중심은 별도로 계산하지 않는다. 20Hz는 목표 간격이며 프레임률에 따라 달라지고 매우 짧은 구역 통과의 전체 물리 프레임 기록은 아니다. 컴파일 및 기존 CSV 테스트 포함 NavigationTracking.Tests 통과. 새 Play 파일의 실제 데이터 수집은 다음 실행에서 확인해야 한다.
 
 2026-10-03: 가상 NFC/UWB 기본 위치를 루트 BoxCollider의 TransformPoint(center)로 변경했다. 명시적 Reader가 있으면 우선 사용하며 BoxCollider가 없으면 Rigidbody.worldCenterOfMass, 둘 다 없으면 원점으로 대체한다. 방향과 XZ 거리 계산·지점 배치·반경은 유지했다. 진단 JSON version=2에 positionBasis/readerOffsetFromOrigin을 추가하고 reader.world/local이 실제 사용 기준점을 나타내도록 수정했다. 런타임 참조 컴파일 통과. 이전 092603 주행 기록에 차체 중심 판정을 재적용하면 기존 리더 감지 0회에서 중앙 기준 감지 발생을 확인했다(기록 재계산이며 새 Unity Play/FSM 완주 검증은 아님).
+
+
+## 2026-10-03 선택 설비 점검
+
+OpenAI Agent는 A만/B만/A+B 요청을 지원한다. A는 A1→A2, B는 B1→B2, A+B는 네 지점을 진단한다. A는 왼쪽 한 바퀴, B는 오른쪽 한 바퀴, A+B는 기존 양쪽 경로를 주행한다. NFC 위치는 유지한다. 매 임무 전 Unity Play를 다시 시작한다.
+
+TCP 시작 action은 각각 `mission_start_a`, `mission_start_b`, `mission_start`이다. Backend와 Unity를 함께 업데이트해야 한다. Snapshot 선택 필드 `targets`는 계획 확정 후 정규화된 `["A"]`, `["B"]`, `["A","B"]`이며 `total_points`는 각각 2/2/4이다. 계획 전과 과거 기록은 기본 4이며 targets가 없을 수 있다. COMPLETED는 Unity 종료와 선택 지점 전체 진단 성공을 모두 요구한다. 다른 설비 이벤트는 진단/보고에 포함하지 않는다.
+
+`fixed_ab`와 8877 UI 모의 서버는 기존 A+B 시험용이다. 단독 설비 시나리오는 기본 `openai` 모드를 사용한다. 과거 `backend/contracts.py`의 별도 모델은 통합 REST 계약이 아니다.
+
+
+2026-10-03 단독 순환: A=UnderMid→UpperMid→UpperLeft→UnderLeft→UnderMid, B=UnderMid→UpperMid→UpperRight→UnderRight→UnderMid. A+B 경로는 유지한다. 출발 방향이 첫 구간과 3도 이상 다르면 AligningStartHeading에서 제자리 정렬 후 FollowingLane으로 전이한다. 교차점 confidence 종료와 NFC 배치는 유지한다. 실제 Play에서 특히 B 출발 및 기존 NFC 접근 가능 여부를 확인해야 한다.
+
+
+2026-10-03 B 출발 구간 NFC: 115604 로그에서 AligningStartHeading→FollowingLane→StraightToNextMarker→Fault(30초)를 확인했다. 출발 정렬 후 차선 없는 구간을 고정 방향으로 진행해 UnderRight Entry 감지 범위를 벗어났다. B 단독/UnderMid 출발/가상 센서 모드에 FollowingSegmentNfc를 추가했다. 시작 시 실제 NFC 리더 위치부터 UnderRight Entry까지 1.5m 이하 간격으로 반경 0.20m Segment NFC를 런타임 생성하고, UWB 위치 유도로 차례로 접근한다. 각 감지 후 기존 entryTagDelay만큼 정지하고 다음 구간으로 진행한다. 마지막에는 기존 Entry→Centre FSM으로 인계한다. 구간마다 기존 absoluteTurnStageTimeout을 적용하며 회피 시간은 제외한다. 오브젝트는 NFC_B_Departure_Segments_SIM 아래 NFC_B_Departure_01_SIM 등의 이름으로 생성되고 Play 종료 시 사라진다. 수동 조정은 Play 중 가능하며 영구 씬 배치는 아직 하지 않았다. Segment 역할은 route graph Entry 인덱스에 포함하지 않는다. A/A+B 및 나머지 구간은 기존 NFC를 사용한다. StraightToNextMarker의 회전 0은 유지한다. Unity 참조 C# 컴파일 통과(기존 경고); 실제 Play 완주 및 구간 장애물 검증은 미수행.
+
+
+2026-10-03 방향별 NFC 영구 배치: jetbot_env 씬에 14개 방향별 Entry를 추가하고 기존 6개 Centre를 NFC_<Node>_Center로 이름 변경했다. 기존 노드 오브젝트는 graph anchor로 유지한다. 각 Entry는 공통 Centre와 incomingNode를 참조하며 Centre에서 해당 방향 1.2m 위치를 초기값으로 사용한다. UnderRight는 Entry_Left/Entry_Upper, UpperRight는 Left/Lower, UnderLeft는 Right/Upper, UpperLeft는 Right/Lower, UnderMid는 Left/Right/Upper, UpperMid는 Left/Right/Lower이다. 각 기존 under_/upper_ 오브젝트 아래에 영구 저장되어 Play 없이 위치 조정 가능하다. graph는 방향별 Entry를 중복 노드로 인덱싱하지 않으며 TryGetEntry(from,to)로 진입점을 선택한다. B 출발 중간 NFC 자동 생성 호출은 제거했다. Unity 참조 컴파일 및 씬 14개 Entry의 부모/공통 Centre 참조·ID 중복 검사 통과. 실제 Unity 씬 재로드와 주행은 미검증이며 배치 간격은 현장 조정 가능하다.
+
+
+2026-10-03 점검 임무 기준점: A/B/A+B의 시작·종료를 6번(UnderMid)으로 고정했다. 6번이 아닌 논리 노드에서 새 점검 시작은 거부하며 로봇을 순간이동시키지 않는다. B 단독은 6→3→2→5→6: 상단 중앙까지 직진 후 우회전하며 B1→B2 순서로 점검한다. A는 6→3→1→4→6, A+B는 6→3→1→4→6→5→2→3→6(기존 B2→B1) 유지. 새 방향별 Entry NFC를 사용한다. 실제 역방향 B 주행 검증은 남아 있다.
+
+
+2026-10-03 VR 로봇 카메라 시점: PcVrView가 jetbot 하위 front_camera를 찾아 RobotVrAnchor.robotCamera에 연결한다. 중립 HMD 자세를 센서 카메라의 실제 월드 위치·회전에 맞추고 상대 머리 움직임을 유지한다. 기존 로봇 원점+eyeOffset은 카메라 누락 시 fallback이며 경고를 출력한다. F9/오른쪽 B 버튼 재중앙 정렬은 위치와 방향을 함께 보정한다. 차선 인식용 RenderTexture/카메라 Transform은 수정하지 않는다. Unity 참조 C# 컴파일 통과(기존 경고), 실제 Quest 착용 시점 검증은 미수행.

@@ -78,21 +78,22 @@ class AgentRunner:
         self.service.touch(job, state="PLANNING", step="agent_plan", message="Agent가 목표와 계획을 확인하고 있습니다.")
         plan = await self.llm_call(job, "plan", self.model.plan(job["request"]["text"]))
         self.service.active(job)
-        if plan.task != "inspection" or len(plan.targets) != 2 or set(plan.targets) != {"A", "B"}:
-            self.service.finish(job, "FAILED", "unsupported_goal: 현재는 설비 A+B 전체 점검만 지원합니다.")
+        if plan.task != "inspection" or not plan.targets or len(plan.targets) != len(set(plan.targets)) or not set(plan.targets) <= {"A", "B"}:
+            self.service.finish(job, "FAILED", "unsupported_goal: 설비 A, B 또는 A+B 점검만 지원합니다.")
             raise asyncio.CancelledError()
+        self.service.select_targets(job, plan.targets)
         self.service.event(job, "plan", plan.model_dump())
-        self.service.touch(job, plan=plan.steps, message="A+B 점검 계획 확인 · Unity 시작 준비")
+        self.service.touch(job, plan=plan.steps, message="+".join(job["targets"]) + " 점검 계획 확인 · Unity 시작 준비")
         return state
 
     async def execute(self, state):
         job = self.job(state)
         link = self.service.link
         observation = dict(connected=link.fresh, state=(link.latest or {}).get("state"),
-                           can_start=(link.latest or {}).get("canStart", False))
+                           can_start=(link.latest or {}).get("canStart", False), targets=job["targets"])
         self.service.event(job, "observation", observation)
         choice = await self.choose(job, observation,
-            {"start_inspection": "검증된 A+B 임무 시작", "abort_mission": "상태가 부적절하면 실행 보류"})
+            {"start_inspection": "검증된 선택 설비 임무 시작", "abort_mission": "상태가 부적절하면 실행 보류"})
         if choice != "start_inspection":
             self.service.finish(job, "FAILED", "Agent가 Unity 실행을 보류했습니다.")
             raise asyncio.CancelledError()
@@ -130,13 +131,13 @@ class AgentRunner:
 
     async def report(self, state):
         job = self.job(state)
-        self.service.touch(job, step="agent_report", message="4지점 진단 완료 · Agent 결과 확인 중")
+        self.service.touch(job, step="agent_report", message=f"{len(self.service.expected_points(job))}지점 진단 완료 · Agent 결과 확인 중")
         # Explicit allowlist excludes source paths, file names and raw waveform.
         observations = [dict(point=p["point"], status=p["status"], models=p["models"]) for p in job["points"]]
         await self.choose(job, dict(points=observations, data_mode="offline_csv_replay"),
                           {"report_results": "검증된 지점별 결과 보고"})
         self.service.active(job)
-        if not job.get("unity_completed") or len(job["points"]) != 4 or any(p["status"] != "SUCCEEDED" for p in job["points"]):
+        if not job.get("unity_completed") or {p["point"] for p in job["points"]} != set(self.service.expected_points(job)) or any(p["status"] != "SUCCEEDED" for p in job["points"]):
             raise ValueError("Incomplete report")
         self.service.complete_report(job)
         return state

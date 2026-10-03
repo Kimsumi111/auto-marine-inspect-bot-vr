@@ -36,11 +36,11 @@ Backend 프로세스에 `OPENAI_API_KEY`를 설정한 뒤 `backend/start-backend
 
 1. Unity 새 Play → UI 주소 `http://127.0.0.1:8767` 적용.
 2. 음성 또는 텍스트 입력 후 사용자가 전송한다. 음성 전사만으로 실행하지 않는다.
-3. 접수 ID를 SQLite에 저장하고 LangGraph가 목표·계획을 해석한다. A+B만 지원하며 A 단독/없는 설비를 A+B로 확대하지 않는다.
+3. 접수 ID를 SQLite에 저장하고 LangGraph가 목표·계획을 해석한다. A 단독, B 단독, A+B를 지원하며 없는 설비를 임의로 확대하지 않는다.
 4. Agent의 시작/보류 선택 후 Backend가 fresh Idle과 같은 Play 세션을 다시 확인하고 mission_start를 한 번 전송한다.
 5. 별도 TCP 수신 루프가 주행·Fault·점검 이벤트를 감시한다. 지점별 진단과 LLM 응답을 기다리지 않는다.
 6. 각 지점에서 기존 CSV 진단을 실행한다. 동시 추론 1건, 실행당 45초. Agent는 실패 시 같은 CSV 분석을 최대 1회 재시도하거나 미판정으로 끝낸다. 새 센서 측정은 아니다.
-7. Unity Completed와 4지점 SUCCEEDED를 모두 확인한 뒤 Agent가 결과 보고를 선택한다. 숫자와 요약은 실제 결과로 작성하며 이상 검출도 정상적인 임무 완료다. 미판정이 남으면 전체 FAILED이다.
+7. Unity Completed와 선택한 설비의 모든 지점 SUCCEEDED를 모두 확인한 뒤 Agent가 결과 보고를 선택한다. 숫자와 요약은 실제 결과로 작성하며 이상 검출도 정상적인 임무 완료다. 미판정이 남으면 전체 FAILED이다.
 
 진행 snapshot에 points, agent_mode, plan을 제공한다. `/mission/{id}/events`에는 계획, 도구 선택 근거, 실행·진단·Fault·보고를 저장한다. CSV 절대 경로·원본 파형을 모델 입력으로 보내지 않는다. 모델별 확률은 독립 결과다.
 

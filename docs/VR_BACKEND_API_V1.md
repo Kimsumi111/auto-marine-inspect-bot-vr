@@ -4,9 +4,9 @@
 
 2026-10-02: `backend.main:app`/8767로 VR과 OpenAI Agent를 통합했다. `backend.vr_main:app`은 동일 앱 별칭이다. 실행·설정·검증은 `backend/README.md`를 따른다. 모의 서버 8877은 UI 전용이며 Agent·Unity·실제 진단을 실행하지 않는다.
 
-기본 `openai` 모드는 자연어 목표를 해석하되 실행은 A+B 전체 점검만 허용한다. A 단독/미등록 설비를 A+B로 확대하지 않는다. `fixed_ab`는 명시적인 통신 시험 모드이며 기존 세 문구만 받는다. 키 누락을 고정 모드로 숨기지 않는다.
+기본 `openai` 모드는 자연어 목표를 해석하되 실행은 A 단독, B 단독, A+B 점검을 허용한다. 미등록 설비와 중복 대상은 거부한다. `fixed_ab`는 명시적인 통신 시험 모드이며 기존 세 문구만 받는다. 키 누락을 고정 모드로 숨기지 않는다.
 
-MissionSnapshot의 추가 선택 필드 `agent_mode`는 openai/fixed_ab이고 `plan`은 Agent가 반환한 계획 문자열 배열이다. 기존 기록·모의 응답에서는 생략될 수 있다. 계획은 고정 A+B 실행 범위 안의 설명이며 임의 경로/코드 실행을 허용하지 않는다. Unity UI는 모드와 계획을 표시한다.
+MissionSnapshot의 추가 선택 필드 `agent_mode`는 openai/fixed_ab이고 `plan`은 Agent가 반환한 계획 문자열 배열이다. 기존 기록·모의 응답에서는 생략될 수 있다. 계획은 선택한 A/B 설비 점검 범위 안의 설명이며 임의 경로/코드 실행을 허용하지 않는다. Unity UI는 모드와 계획을 표시한다.
 
 ### v1 추가 필드: 진행 중 지점별 진단
 
@@ -14,7 +14,7 @@ MissionSnapshot에 선택 필드 `points: PointDiagnosis[]`를 추가했다. Mis
 
 각 지점은 기존 필드에 선택 메타데이터 `source_file_name`, `source_sha256`, `sample_count`, `sampling_frequency`를 제공한다. 절대 파일 경로는 반환하지 않는다. 대기/실행 중은 NOT_EVALUATED, 성공은 SUCCEEDED, 오류는 FAILED이다. 취소로 미완료인 지점은 NOT_EVALUATED와 사유를 보존한다. 지점 결과가 바뀌면 snapshot revision도 증가한다.
 
-Unity Completed 후 남은 추론은 DIAGNOSING이며, 네 지점 모두 SUCCEEDED일 때만 COMPLETED이다. 이상 검출도 성공적으로 완료된 진단이다. 한 지점이라도 진단에 실패하면 전체 FAILED이며 성공한 지점 결과는 남긴다. 이미 Unity 종료가 확인된 DIAGNOSING에서 취소하면 추가 TCP 정지 명령 없이 남은 추론을 중단하고 CANCELLED/stop_confirmed=true가 된다.
+Unity Completed 후 남은 추론은 DIAGNOSING이며, 선택한 설비의 모든 지점이 SUCCEEDED일 때만 COMPLETED이다. 이상 검출도 성공적으로 완료된 진단이다. 한 지점이라도 진단에 실패하면 전체 FAILED이며 성공한 지점 결과는 남긴다. 이미 Unity 종료가 확인된 DIAGNOSING에서 취소하면 추가 TCP 정지 명령 없이 남은 추론을 중단하고 CANCELLED/stop_confirmed=true가 된다.
 
 ## 연결과 책임
 
@@ -22,7 +22,7 @@ Unity Completed 후 남은 추론은 DIAGNOSING이며, 네 지점 모두 SUCCEED
 - UTF-8 JSON, `Content-Type: application/json`. v1은 같은 PC의 Unity Editor/Quest Link용이다. 독립 Quest/외부망 공개 및 인증 계약은 범위 밖이다.
 - VR은 REST만 사용한다. Backend만 Unity TCP `127.0.0.1:8765`를 소유한다. 음성 서버 `8766`은 기존대로 유지한다.
 - VR은 음성 전사를 편집 가능한 명령으로 채우며 자동 실행하지 않는다. 전송 버튼/Y/F5로 접수한다.
-- 실제 Backend는 요청 검증, Agent 해석, A+B 지원 여부 판단, Unity 상태 검증을 담당한다. A만/B만/미등록 대상 요청을 A+B로 묵시 확대하지 않고 `unsupported_goal`로 실패시킨다.
+- 실제 Backend는 요청 검증, Agent 해석, A/B 대상 지원 여부 판단, Unity 상태 검증을 담당한다. A만/B만 요청은 해당 설비만 점검하며 미등록 대상은 `unsupported_goal`로 실패시킨다.
 - 임무 수락은 실행 완료 증거가 아니다. Unity ACK는 점검 완료 증거가 아니다.
 
 ## 공통 ID·중복·보존 규칙
@@ -91,7 +91,7 @@ Unity Completed 후 남은 추론은 DIAGNOSING이며, 네 지점 모두 SUCCEED
 - 상태: PENDING → PLANNING → EXECUTING / DIAGNOSING → COMPLETED. 지점별 이동/진단이 겹칠 수 있으며 순서를 단순 enum 숫자로 비교하지 않는다. 실패는 FAILED.
 - CANCEL 요청은 즉시 CANCELLING으로 기록하고 LLM 응답을 기다리지 않는 정지 경로로 전달한다. **정지 확인 후에만 CANCELLED + stop_confirmed=true**.
 - 정지 timeout/연결 단절 등 결과가 불확실하면 FAILED + requires_attention=true + stop_confirmed=false. 오류 원인은 message에 표시한다. FAILED를 정지 완료로 해석하지 않는다.
-- COMPLETED는 모든 4개 지점 완료와 4개 모델씩의 진단 결과 확보 후에만 사용한다. 진단 미판정은 FAILED와 부분 결과로 보고한다. 이상 검출 자체는 실행 실패가 아니므로 COMPLETED일 수 있다.
+- COMPLETED는 선택된 모든 지점(단독 2개, A+B 4개) 완료와 4개 모델씩의 진단 결과 확보 후에만 사용한다. 진단 미판정은 FAILED와 부분 결과로 보고한다. 이상 검출 자체는 실행 실패가 아니므로 COMPLETED일 수 있다.
 - terminal: COMPLETED / FAILED / CANCELLED. requires_attention=true인 임무는 terminal이어도 상태 조회와 취소 재요청을 허용하고 신규 임무를 막는다. 이미 CANCELLED/COMPLETED를 다시 취소해도 상태를 되돌리지 않는다.
 - 기존 Unity는 Play 세션당 1회 시작만 지원한다. 다음 요청은 Backend가 canStart/sessionId를 확인하고 불가능하면 `unity_restart_required`로 거부한다.
 
@@ -160,3 +160,12 @@ PC: 텍스트 편집/전송 버튼, F5 전송, F6 취소, F8 녹음, F7 마이�
 2026-10-02 검증: 모의 HTTP 테스트 9개 통과, Unity 참조를 사용한 C# 컴파일 통과. Unity Play에서 텍스트 요청 → 모의 상태 조회 → 4지점 완료와 결과 UI 표시 확인. 별도 모의 요청에서 취소 → CANCELLED/정지 확인 표시도 확인했다. 실제 Backend·LLM·Unity TCP 임무 E2E 및 Quest 장치 검증은 이 변경으로 수행하지 않았다.
 
 통합 검증(2026-10-02): Backend 테스트 46개 통과. 모의 LLM·Unity 이벤트와 실제 저장 CSV/모델 기반 실행을 구분한다. 실계정 API와 Unity 전체 주행·Quest 시연은 아직 미검증이다.
+
+
+## 2026-10-03 선택 설비 점검
+
+OpenAI Agent는 A만/B만/A+B 요청을 지원한다. A는 A1→A2, B는 B1→B2, A+B는 네 지점을 진단한다. A는 왼쪽 한 바퀴, B는 오른쪽 한 바퀴, A+B는 기존 양쪽 경로를 주행한다. NFC 위치는 유지한다. 매 임무 전 Unity Play를 다시 시작한다.
+
+TCP 시작 action은 각각 `mission_start_a`, `mission_start_b`, `mission_start`이다. Backend와 Unity를 함께 업데이트해야 한다. Snapshot 선택 필드 `targets`는 계획 확정 후 정규화된 `["A"]`, `["B"]`, `["A","B"]`이며 `total_points`는 각각 2/2/4이다. 계획 전과 과거 기록은 기본 4이며 targets가 없을 수 있다. COMPLETED는 Unity 종료와 선택 지점 전체 진단 성공을 모두 요구한다. 다른 설비 이벤트는 진단/보고에 포함하지 않는다.
+
+`fixed_ab`와 8877 UI 모의 서버는 기존 A+B 시험용이다. 단독 설비 시나리오는 기본 `openai` 모드를 사용한다. 과거 `backend/contracts.py`의 별도 모델은 통합 REST 계약이 아니다.

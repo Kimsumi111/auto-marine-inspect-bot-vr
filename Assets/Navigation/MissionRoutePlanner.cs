@@ -36,7 +36,7 @@ namespace ShipRobot.Navigation
                     });
 
                 case PlantMission.InspectEquipmentA:
-                    return ConnectCurrentNode(currentNode, new[]
+                    return ConnectCurrentNode(PlantNodeId.UnderMid, new[]
                     {
                         PlantNodeId.UnderMid,
                         PlantNodeId.UpperMid,
@@ -46,17 +46,17 @@ namespace ShipRobot.Navigation
                     });
 
                 case PlantMission.InspectEquipmentB:
-                    return ConnectCurrentNode(currentNode, new[]
+                    return ConnectCurrentNode(PlantNodeId.UnderMid, new[]
                     {
                         PlantNodeId.UnderMid,
-                        PlantNodeId.UnderRight,
-                        PlantNodeId.UpperRight,
                         PlantNodeId.UpperMid,
+                        PlantNodeId.UpperRight,
+                        PlantNodeId.UnderRight,
                         PlantNodeId.UnderMid
                     });
 
                 case PlantMission.InspectEquipmentAAndB:
-                    return ConnectCurrentNode(currentNode, new[]
+                    return ConnectCurrentNode(PlantNodeId.UnderMid, new[]
                     {
                         PlantNodeId.UnderMid,
                         PlantNodeId.UpperMid,

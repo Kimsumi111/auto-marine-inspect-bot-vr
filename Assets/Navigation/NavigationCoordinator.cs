@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 using System.IO;
@@ -16,7 +16,7 @@ namespace ShipRobot.Navigation
         {
             Idle, FollowingLane, ConfirmingNode, ApproachingTurnCenter,
             SearchingExitLane, VisualAlign, StraightThroughJunction,
-            StraightToNextMarker, InspectingEquipment, Completed, Fault
+            StraightToNextMarker, InspectingEquipment, Completed, Fault, AligningStartHeading, FollowingSegmentNfc
         }
 
         [Serializable]
@@ -32,7 +32,7 @@ namespace ShipRobot.Navigation
             [Range(0.05f, 1f)] public float searchTurnCommand;
         }
 
-        private enum ActiveMission { None, SingleEdge, Perimeter, EquipmentA, EquipmentAAndB }
+        private enum ActiveMission { None, SingleEdge, Perimeter, EquipmentA, EquipmentAAndB, EquipmentB }
 
         [Header("Connections")]
         [SerializeField] private PlantRouteGraph routeGraph;
@@ -156,7 +156,7 @@ namespace ShipRobot.Navigation
             ResetMission();
         }
         public bool IsFollowingEquipmentLeg(PlantNodeId from, PlantNodeId to) =>
-            activeMission == ActiveMission.EquipmentAAndB &&
+            (activeMission == ActiveMission.EquipmentAAndB || activeMission == ActiveMission.EquipmentA || activeMission == ActiveMission.EquipmentB) &&
             (State == MissionState.FollowingLane || State == MissionState.StraightToNextMarker) &&
             CurrentNode == from &&
             targetRouteIndex < activeRoute.Count && activeRoute[targetRouteIndex] == to;
@@ -255,7 +255,7 @@ namespace ShipRobot.Navigation
                 }
                 NavigationMarker diagnosticEntry = null;
                 if (routeGraph != null && targetRouteIndex >= 0 && targetRouteIndex < activeRoute.Count)
-                    routeGraph.TryGetMarker(activeRoute[targetRouteIndex], out diagnosticEntry);
+                    routeGraph.TryGetEntry(CurrentNode, activeRoute[targetRouteIndex], out diagnosticEntry);
                 string positionDiagnostics = NavigationPositionDiagnostics.Capture(laneFollower.transform, indoorSensors,
                     diagnosticEntry, diagnosticEntry != null ? diagnosticEntry.CentreMarker : null);
                 bool usable = laneFollower.TryGetLaneDetection(out HsvLaneDetector.Detection d);
@@ -379,6 +379,12 @@ namespace ShipRobot.Navigation
             }
             switch (State)
             {
+                case MissionState.FollowingSegmentNfc:
+                    UpdateDepartureSegments();
+                    return;
+                case MissionState.AligningStartHeading:
+                    UpdateStartHeading();
+                    return;
                 case MissionState.ApproachingTurnCenter:
                     UpdateApproach();
                     return;
@@ -500,20 +506,22 @@ namespace ShipRobot.Navigation
         [ContextMenu("Start Equipment A Mission")]
         public void StartEquipmentAMission()
         {
-            if (missionPlanner == null || inspectionPointA1 == null || inspectionPointA2 == null)
-            {
-                Fail("Equipment A inspection setup is incomplete");
-                return;
-            }
-
-            StartRoute(
-                missionPlanner.BuildMissionRoute(PlantMission.InspectEquipmentA, CurrentNode),
-                ActiveMission.EquipmentA);
+            StartSelectedEquipmentMission(ActiveMission.EquipmentA);
         }
 
+        [ContextMenu("Start Equipment B Mission")]
+        public void StartEquipmentBMission() => StartSelectedEquipmentMission(ActiveMission.EquipmentB);
+
         [ContextMenu("Start Equipment A And B Mission")]
-        public void StartEquipmentAAndBMission()
+        public void StartEquipmentAAndBMission() => StartSelectedEquipmentMission(ActiveMission.EquipmentAAndB);
+
+        private void StartSelectedEquipmentMission(ActiveMission selection)
         {
+            if (CurrentNode != PlantNodeId.UnderMid)
+            {
+                Fail("Inspection missions must start at node 6 (UnderMid). Restart Unity Play at the base.");
+                return;
+            }
             if (missionPlanner == null || routeGraph == null ||
                 inspectionPointA1 == null || inspectionPointA2 == null)
             {
@@ -536,9 +544,100 @@ namespace ShipRobot.Navigation
             if (inspectionPointB2 == null)
                 inspectionPointB2 = CreateBInspectionPoint(inspectionPointA2, "inspect_point_B2", aisleOffsetX);
 
-            StartRoute(
-                missionPlanner.BuildMissionRoute(PlantMission.InspectEquipmentAAndB, CurrentNode),
-                ActiveMission.EquipmentAAndB);
+            PlantMission routeMission = selection switch
+            {
+                ActiveMission.EquipmentA => PlantMission.InspectEquipmentA,
+                ActiveMission.EquipmentB => PlantMission.InspectEquipmentB,
+                _ => PlantMission.InspectEquipmentAAndB
+            };
+            StartRoute(missionPlanner.BuildMissionRoute(routeMission, CurrentNode), selection);
+            if (State == MissionState.Fault) return;
+            if (!TryCalculateEdgeYaw(activeRoute[0], activeRoute[1], out desiredExitYaw))
+            { Fail("Initial route heading unavailable"); return; }
+            if (Mathf.Abs(Mathf.DeltaAngle(laneFollower.transform.eulerAngles.y, desiredExitYaw)) > 3f)
+            {
+                absoluteStageStarted = Time.time;
+                State = MissionState.AligningStartHeading;
+                laneFollower.SetManualCommand(0f, 0f);
+                statusDetail = $"Aligning departure heading to {activeRoute[1]} ({desiredExitYaw:F1} deg)";
+            }
+        }
+
+        private readonly List<NavigationMarker> departureZones = new();
+        private int departureZoneIndex;
+        private float departurePauseUntil = -1f;
+        private GameObject departureZoneRoot;
+
+        private void BeginDepartureSegments()
+        {
+            if (!routeGraph.TryGetMarker(activeRoute[1], out NavigationMarker destination))
+            { Fail("Departure NFC destination missing"); return; }
+            if (departureZoneRoot != null) Destroy(departureZoneRoot);
+            departureZoneRoot = new GameObject("NFC_B_Departure_Segments_SIM");
+            departureZones.Clear();
+            Vector3 start = indoorSensors.ReaderPosition;
+            Vector3 end = destination.transform.position;
+            end.y = start.y;
+            int count = Mathf.Max(1, Mathf.CeilToInt(PlanarDistance(start, end) / 1.5f));
+            for (int i = 1; i < count; i++)
+                departureZones.Add(NavigationMarker.CreateSegment(departureZoneRoot.transform,
+                    $"NFC_B_Departure_{i:00}_SIM", activeRoute[1], Vector3.Lerp(start, end, (float)i / count)));
+            departureZoneIndex = 0;
+            departurePauseUntil = -1f;
+            absoluteStageStarted = Time.time;
+            State = MissionState.FollowingSegmentNfc;
+            laneFollower.SetManualCommand(0f, 0f);
+        }
+
+        private void UpdateDepartureSegments()
+        {
+            if (Time.time - absoluteStageStarted > absoluteTurnStageTimeout)
+            { Fail("Departure segment NFC timeout"); return; }
+            if (departureZoneIndex >= departureZones.Count)
+            {
+                if (TryEnterQrJunction()) return;
+                if (!routeGraph.TryGetMarker(activeRoute[1], out NavigationMarker entry))
+                { Fail("Departure entry NFC missing"); return; }
+                DriveWithIndoorPosition(entry.transform.position, approachCommand);
+                statusDetail = "Departure final entry NFC; " + statusDetail;
+                return;
+            }
+            NavigationMarker zone = departureZones[departureZoneIndex];
+            if (indoorSensors.IsInside(zone))
+            {
+                laneFollower.SetManualCommand(0f, 0f);
+                if (departurePauseUntil < 0f) departurePauseUntil = Time.time + entryTagDelay;
+                nfcDecision = $"segment:{zone.name}:inside_delay_pending";
+                statusDetail = nfcDecision;
+                if (Time.time < departurePauseUntil) return;
+                RecordDrivingLog("segment_nfc_confirmed");
+                departureZoneIndex++;
+                departurePauseUntil = -1f;
+                absoluteStageStarted = Time.time;
+                return;
+            }
+            departurePauseUntil = -1f;
+            nfcDecision = $"segment:{zone.name}:outside_radius";
+            DriveWithIndoorPosition(zone.transform.position, approachCommand);
+            statusDetail = $"Segment {departureZoneIndex + 1}/{departureZones.Count}: {zone.name}; " + statusDetail;
+        }
+
+        private void UpdateStartHeading()
+        {
+            float error = Mathf.DeltaAngle(laneFollower.transform.eulerAngles.y, desiredExitYaw);
+            if (Time.time - absoluteStageStarted > absoluteTurnStageTimeout)
+            { Fail("Initial heading alignment timed out"); return; }
+            if (Mathf.Abs(error) <= 3f)
+            {
+                laneFollower.SetManualCommand(0f, 0f);
+                State = MissionState.FollowingLane;
+                statusDetail = $"Following to {activeRoute[targetRouteIndex]}";
+                laneFollower.ResumeLaneFollowing();
+                return;
+            }
+            statusDetail = $"Aligning departure heading: error={error:F1} deg";
+            laneFollower.SetManualCommand(0f, Mathf.Sign(error) * searchTurnCommand *
+                Mathf.Clamp(Mathf.Abs(error) / 30f, 0.2f, 1f));
         }
 
         private static Transform CreateBInspectionPoint(Transform source, string pointName, float aisleOffsetX)
@@ -593,11 +692,12 @@ namespace ShipRobot.Navigation
         private bool TryBeginEquipmentInspection()
         {
             int inspectionCount = activeMission == ActiveMission.EquipmentAAndB ? 4 :
-                activeMission == ActiveMission.EquipmentA ? 2 : 0;
+                (activeMission == ActiveMission.EquipmentA || activeMission == ActiveMission.EquipmentB) ? 2 : 0;
             if (activeInspectionIndex >= inspectionCount)
                 return false;
 
-            Transform target = activeInspectionIndex switch
+            int pointIndex = activeMission == ActiveMission.EquipmentB ? 3 - activeInspectionIndex : activeInspectionIndex;
+            Transform target = pointIndex switch
             {
                 0 => inspectionPointA1,
                 1 => inspectionPointA2,
@@ -676,7 +776,7 @@ namespace ShipRobot.Navigation
             ResolveManeuver(entry, CurrentNode, exit);
             if (useAbsoluteTurns)
             {
-                if (!routeGraph.TryGetMarker(CurrentNode, out NavigationMarker entryMarker) ||
+                if (!routeGraph.TryGetEntry(entry, CurrentNode, out NavigationMarker entryMarker) ||
                     entryMarker.CentreMarker == null)
                 {
                     Fail("Central QR is not configured");
@@ -757,7 +857,7 @@ namespace ShipRobot.Navigation
             if (useIndoorSensorSimulation)
             {
                 if (targetRouteIndex >= activeRoute.Count) { nfcDecision = "entry:no_target"; return false; }
-                if (!routeGraph.TryGetMarker(activeRoute[targetRouteIndex], out NavigationMarker zone))
+                if (!routeGraph.TryGetEntry(CurrentNode, activeRoute[targetRouteIndex], out NavigationMarker zone))
                 { nfcDecision = "entry:zone_missing"; return false; }
                 if (zone.Role != NavigationMarker.MarkerRole.Entry) { nfcDecision = "entry:wrong_role"; return false; }
                 if (indoorSensors == null || !indoorSensors.isActiveAndEnabled) { nfcDecision = "entry:sensor_disabled"; return false; }
@@ -770,7 +870,7 @@ namespace ShipRobot.Navigation
                 return true;
             }
             if (targetRouteIndex >= activeRoute.Count - 1) return false;
-            if (!routeGraph.TryGetMarker(activeRoute[targetRouteIndex], out NavigationMarker entryMarker))
+            if (!routeGraph.TryGetEntry(CurrentNode, activeRoute[targetRouteIndex], out NavigationMarker entryMarker))
                 return false;
             bool seen = markerSource.TryObserveMarker(entryMarker, out MarkerObservation observation) &&
                 observation.confidence >= minimumMarkerConfidence &&
@@ -1156,7 +1256,7 @@ namespace ShipRobot.Navigation
                     Fail("Entry QR missing after straight junction");
                 return;
             }
-            if (activeMission == ActiveMission.EquipmentAAndB &&
+            if ((activeMission == ActiveMission.EquipmentAAndB || activeMission == ActiveMission.EquipmentA || activeMission == ActiveMission.EquipmentB) &&
                 CurrentNode == PlantNodeId.UnderMid &&
                 activeRoute[targetRouteIndex] == PlantNodeId.UnderRight)
             {
@@ -1294,7 +1394,7 @@ namespace ShipRobot.Navigation
 
             if (useIndoorSensorSimulation)
             {
-                if (!routeGraph.TryGetMarker(activeRoute[targetRouteIndex], out NavigationMarker entryZone))
+                if (!routeGraph.TryGetEntry(CurrentNode, activeRoute[targetRouteIndex], out NavigationMarker entryZone))
                 { Fail("SIM NFC entry zone missing"); return; }
                 // This state advances straight; coordinate guidance belongs to centre approach.
                 laneFollower.SetManualCommand(fallbackStraightCommand, 0f);
@@ -1332,7 +1432,7 @@ namespace ShipRobot.Navigation
         private bool TryArriveAtTargetAfterAvoidance()
         {
             if (!avoidanceInterruptedCurrentLeg || targetRouteIndex >= activeRoute.Count ||
-                !routeGraph.TryGetMarker(activeRoute[targetRouteIndex], out NavigationMarker marker))
+                !routeGraph.TryGetEntry(CurrentNode, activeRoute[targetRouteIndex], out NavigationMarker marker))
                 return false;
 
             Collider footprint = laneFollower.GetComponent<Collider>();
@@ -1420,7 +1520,7 @@ namespace ShipRobot.Navigation
         private void CompleteMission()
         {
             int requiredInspections = activeMission == ActiveMission.EquipmentAAndB ? 4 :
-                activeMission == ActiveMission.EquipmentA ? 2 : 0;
+                (activeMission == ActiveMission.EquipmentA || activeMission == ActiveMission.EquipmentB) ? 2 : 0;
             if (activeInspectionIndex < requiredInspections)
             {
                 Fail($"Equipment mission reached the route end with only {activeInspectionIndex}/{requiredInspections} inspections completed");

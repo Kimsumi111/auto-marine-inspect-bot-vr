@@ -33,6 +33,7 @@ namespace MetaMarine.VR
         public string updated_at;
         public string agent_mode;
         public string[] plan;
+        public string[] targets; // Optional for older v1 servers; resolved after planning.
         public PointDiagnosis[] points; // Optional additive v1 field: live point results.
         public bool Terminal => state == "COMPLETED" || state == "FAILED" || state == "CANCELLED";
         public void Validate()
@@ -41,9 +42,17 @@ namespace MetaMarine.VR
             if (api_version != 1 || !Guid.TryParse(mission_id, out _) || !Guid.TryParse(request_id, out _) ||
                 revision < 0 || !states.Contains(state) || (transport_mode != "backend" && transport_mode != "mock") ||
                 execution_mode != "simulation" || data_mode != "offline_csv_replay" ||
-                total_points != 4 || completed_points < 0 || completed_points > total_points ||
+                (total_points != 2 && total_points != 4) || completed_points < 0 || completed_points > total_points ||
                 (state == "CANCELLED" && !stop_confirmed)) throw new FormatException("Invalid mission snapshot");
-            if (points != null) MissionReport.ValidatePoints(points);
+            if (targets != null && (targets.Length < 1 || targets.Length > 2 ||
+                targets.Distinct().Count() != targets.Length || targets.Any(t => t != "A" && t != "B") ||
+                total_points != targets.Length * 2)) throw new FormatException("Invalid mission targets");
+            if (points != null)
+            {
+                MissionReport.ValidatePoints(points);
+                if (targets != null && points.Any(p => !targets.Contains(p.equipment_id)))
+                    throw new FormatException("Unexpected equipment result");
+            }
         }
     }
     [Serializable] public sealed class ModelDiagnosis
@@ -85,7 +94,9 @@ namespace MetaMarine.VR
                 points == null)
                 throw new FormatException("Invalid report");
             ValidatePoints(points);
-            if (state == "COMPLETED" && (points.Length != 4 || points.Any(p => p.status != "SUCCEEDED")))
+            if (snapshot.targets != null && points.Any(p => !snapshot.targets.Contains(p.equipment_id)))
+                throw new FormatException("Unexpected equipment result");
+            if (state == "COMPLETED" && (points.Length != snapshot.total_points || points.Any(p => p.status != "SUCCEEDED")))
                 throw new FormatException("Incomplete completed report");
         }
         public static void ValidatePoints(PointDiagnosis[] points)

@@ -87,7 +87,7 @@ def test_graph_retry_report_and_recovery(tmp_path):
         assert client.get(f"/mission/{mid}/result").json() == report
 
 
-@pytest.mark.parametrize("targets", [["A"], ["C"], ["A", "A"], []])
+@pytest.mark.parametrize("targets", [["A", "C"], ["C"], ["A", "A"], []])
 def test_unsupported_targets_do_not_start(tmp_path, targets):
     link = FakeLink()
     with TestClient(create_app(tmp_path / "db", link, Diagnosis(), model=Model(targets), enable_agent=True)) as client:
@@ -259,3 +259,39 @@ def test_restart_does_not_replay_inflight_agent(tmp_path):
         snapshot = client.post("/mission", json=req).json()
         assert snapshot["state"] == "FAILED" and snapshot["requires_attention"]
         assert not second.sent
+
+
+@pytest.mark.parametrize("targets,action", [(["A"], "mission_start_a"), (["B"], "mission_start_b"), (["B", "A"], "mission_start")])
+def test_selected_equipment_end_to_end(tmp_path, targets, action):
+    link, diagnosis = FakeLink(), Diagnosis()
+    path = tmp_path / "db"
+    with TestClient(create_app(path, link, diagnosis, model=Model(targets), enable_agent=True)) as client:
+        mid, req = submit(client)
+        snapshot = wait_state(client, mid, "EXECUTING")
+        assert snapshot["targets"] == sorted(targets)
+        assert snapshot["total_points"] == 2 * len(targets)
+        assert link.sent[0][0] == action
+        # Even if unrelated equipment events arrive, they must not enter diagnosis or report.
+        client.portal.call(lambda: link.emit(state="Completed", canStart=False, inspections=events()))
+        final = wait_state(client, mid, "COMPLETED")
+        assert final["completed_points"] == final["total_points"]
+        report = client.get(f"/mission/{mid}/result").json()
+        assert {p["equipment_id"] for p in report["points"]} == set(targets)
+        assert len(report["points"]) == diagnosis.attempts == 2 * len(targets)
+        assert client.post("/mission", json=req).status_code == 200
+        assert len(link.sent) == 1
+    second = FakeLink()
+    with TestClient(create_app(path, second, Diagnosis(), model=Model(), enable_agent=True)) as client:
+        assert client.get(f"/mission/{mid}/result").json() == report
+        assert not second.sent
+
+
+@pytest.mark.parametrize("targets", [["A"], ["B"]])
+def test_selected_equipment_missing_point_cannot_complete(tmp_path, targets):
+    link = FakeLink()
+    with TestClient(create_app(tmp_path / "db", link, Diagnosis(), model=Model(targets), enable_agent=True)) as client:
+        mid, _ = submit(client)
+        wait_state(client, mid, "EXECUTING")
+        selected = [e for e in events() if e["equipmentId"] in targets]
+        client.portal.call(lambda: link.emit(state="Completed", canStart=False, inspections=selected[:1]))
+        wait_state(client, mid, "FAILED")

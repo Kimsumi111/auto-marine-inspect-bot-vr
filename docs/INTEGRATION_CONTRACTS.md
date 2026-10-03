@@ -62,12 +62,12 @@ Backend ACK는 송신 접수 확인이고 Jetson 실행 완료 확인이 아니�
 
 확정 요청·응답 형식은 [VR_BACKEND_API_V1.md](VR_BACKEND_API_V1.md)를 따른다.
 `MissionContract`, `MissionApiClient`, `MissionPanel`이 텍스트/음성 확인 후 접수, 상태 조회, 취소, 결과 표시를 구현한다.
-`PcVrView`에서 자동 설치한다. 실제 Backend 8767은 `backend/main.py`로 구현했다. OpenAI/LangGraph 자연어 A+B 목표, 실행·조회·취소, SQLite 복원 및 지점별 CSV 진단·재시도를 지원한다. 실행 방법은 `backend/README.md`를 따른다.
+`PcVrView`에서 자동 설치한다. 실제 Backend 8767은 `backend/main.py`로 구현했다. OpenAI/LangGraph 자연어 A/B/A+B 목표, 실행·조회·취소, SQLite 복원 및 지점별 CSV 진단·재시도를 지원한다. 실행 방법은 `backend/README.md`를 따른다.
 `tools/mission_mock/server.py`는 별도 8877 포트의 UI 테스트용 서버이며 Unity TCP/Agent/진단을 실행하지 않는다.
 음성 `TranscriptReady`는 입력창만 갱신한다. 사용자가 전송해야 임무를 접수한다.
 이전 요청 ID와 명령문은 복구 조회를 위해 로컬 PlayerPrefs에 임시 보존하며 완료 결과 확인 후 제거한다.
 
-기본 Agent 모드는 자연어를 해석해 A+B만 실행한다. 고정 문구는 명시적 fixed_ab 시험 모드에서만 사용한다. Unity ACK와 완료 이벤트를 구분하고, 주행 중 취소는 같은 세션의 정지 ACK + 새 Idle/canStart=false telemetry로 확인한다. Backend 재시작/연결 끊김은 자동 재출발하지 않고 미확인 상태를 보존한다. Unity Completed와 네 지점 CSV 진단 SUCCEEDED가 모두 확인되면 전체 COMPLETED이다. 진단 오류는 FAILED/미판정이며 모의 확률로 대체하지 않는다. Unity 종료 확인 후에는 오프라인 진단을 계속할 수 있으며, 그 상태의 취소는 남은 진단만 중단한다.
+기본 Agent 모드는 자연어를 해석해 A 단독/B 단독/A+B를 실행한다. 고정 문구는 명시적 fixed_ab 시험 모드에서만 사용한다. Unity ACK와 완료 이벤트를 구분하고, 주행 중 취소는 같은 세션의 정지 ACK + 새 Idle/canStart=false telemetry로 확인한다. Backend 재시작/연결 끊김은 자동 재출발하지 않고 미확인 상태를 보존한다. Unity Completed와 선택한 설비의 모든 지점 CSV 진단 SUCCEEDED가 모두 확인되면 전체 COMPLETED이다. 진단 오류는 FAILED/미판정이며 모의 확률로 대체하지 않는다. Unity 종료 확인 후에는 오프라인 진단을 계속할 수 있으며, 그 상태의 취소는 남은 진단만 중단한다.
 
 ## Unity TCP v1
 
@@ -93,6 +93,8 @@ Backend ACK는 송신 접수 확인이고 Jetson 실행 완료 확인이 아니�
 | equipmentId | action | 의미 |
 |---|---|---|
 | `robot` | `mission_start` | 기존 A+B 점검 임무 시작 |
+| `robot` | `mission_start_a` | A1/A2 점검 (왼쪽 순환) |
+| `robot` | `mission_start_b` | B2/B1 점검 (오른쪽 순환) |
 | `robot` | `mission_stop` | 회피 중지와 임무 리셋·정지 |
 | `A` / `B` | `pause`, `resume`, `restart`, `stop`, `normal`, `fault` | CSV 재생 제어 |
 
@@ -193,3 +195,15 @@ OpenAI Agent와 VR은 `backend.main:app`/8767 단일 서비스다. `backend.vr_m
 2026-10-03: 주행 CSV에 위치/NFC/FSM 진단 열과 position_diagnostics_json(version=1)을 추가했다. 기존 열은 유지하며 이름으로 열을 읽는다. REST/TCP 계약 변경 없음. 상세 필드와 검증 범위는 PROJECT_CONTEXT 참조.
 
 2026-10-03: 가상 NFC/UWB 기본 위치를 루트 BoxCollider의 TransformPoint(center)로 변경했다. 명시적 Reader가 있으면 우선 사용하며 BoxCollider가 없으면 Rigidbody.worldCenterOfMass, 둘 다 없으면 원점으로 대체한다. 방향과 XZ 거리 계산·지점 배치·반경은 유지했다. 진단 JSON version=2에 positionBasis/readerOffsetFromOrigin을 추가하고 reader.world/local이 실제 사용 기준점을 나타내도록 수정했다. 런타임 참조 컴파일 통과. 이전 092603 주행 기록에 차체 중심 판정을 재적용하면 기존 리더 감지 0회에서 중앙 기준 감지 발생을 확인했다(기록 재계산이며 새 Unity Play/FSM 완주 검증은 아님).
+
+
+2026-10-03 B 출발 구간 NFC: 115604 로그에서 AligningStartHeading→FollowingLane→StraightToNextMarker→Fault(30초)를 확인했다. 출발 정렬 후 차선 없는 구간을 고정 방향으로 진행해 UnderRight Entry 감지 범위를 벗어났다. B 단독/UnderMid 출발/가상 센서 모드에 FollowingSegmentNfc를 추가했다. 시작 시 실제 NFC 리더 위치부터 UnderRight Entry까지 1.5m 이하 간격으로 반경 0.20m Segment NFC를 런타임 생성하고, UWB 위치 유도로 차례로 접근한다. 각 감지 후 기존 entryTagDelay만큼 정지하고 다음 구간으로 진행한다. 마지막에는 기존 Entry→Centre FSM으로 인계한다. 구간마다 기존 absoluteTurnStageTimeout을 적용하며 회피 시간은 제외한다. 오브젝트는 NFC_B_Departure_Segments_SIM 아래 NFC_B_Departure_01_SIM 등의 이름으로 생성되고 Play 종료 시 사라진다. 수동 조정은 Play 중 가능하며 영구 씬 배치는 아직 하지 않았다. Segment 역할은 route graph Entry 인덱스에 포함하지 않는다. A/A+B 및 나머지 구간은 기존 NFC를 사용한다. StraightToNextMarker의 회전 0은 유지한다. Unity 참조 C# 컴파일 통과(기존 경고); 실제 Play 완주 및 구간 장애물 검증은 미수행.
+
+
+2026-10-03 방향별 NFC 영구 배치: jetbot_env 씬에 14개 방향별 Entry를 추가하고 기존 6개 Centre를 NFC_<Node>_Center로 이름 변경했다. 기존 노드 오브젝트는 graph anchor로 유지한다. 각 Entry는 공통 Centre와 incomingNode를 참조하며 Centre에서 해당 방향 1.2m 위치를 초기값으로 사용한다. UnderRight는 Entry_Left/Entry_Upper, UpperRight는 Left/Lower, UnderLeft는 Right/Upper, UpperLeft는 Right/Lower, UnderMid는 Left/Right/Upper, UpperMid는 Left/Right/Lower이다. 각 기존 under_/upper_ 오브젝트 아래에 영구 저장되어 Play 없이 위치 조정 가능하다. graph는 방향별 Entry를 중복 노드로 인덱싱하지 않으며 TryGetEntry(from,to)로 진입점을 선택한다. B 출발 중간 NFC 자동 생성 호출은 제거했다. Unity 참조 컴파일 및 씬 14개 Entry의 부모/공통 Centre 참조·ID 중복 검사 통과. 실제 Unity 씬 재로드와 주행은 미검증이며 배치 간격은 현장 조정 가능하다.
+
+
+2026-10-03 점검 임무 기준점: A/B/A+B의 시작·종료를 6번(UnderMid)으로 고정했다. 6번이 아닌 논리 노드에서 새 점검 시작은 거부하며 로봇을 순간이동시키지 않는다. B 단독은 6→3→2→5→6: 상단 중앙까지 직진 후 우회전하며 B1→B2 순서로 점검한다. A는 6→3→1→4→6, A+B는 6→3→1→4→6→5→2→3→6(기존 B2→B1) 유지. 새 방향별 Entry NFC를 사용한다. 실제 역방향 B 주행 검증은 남아 있다.
+
+
+2026-10-03 VR 로봇 카메라 시점: PcVrView가 jetbot 하위 front_camera를 찾아 RobotVrAnchor.robotCamera에 연결한다. 중립 HMD 자세를 센서 카메라의 실제 월드 위치·회전에 맞추고 상대 머리 움직임을 유지한다. 기존 로봇 원점+eyeOffset은 카메라 누락 시 fallback이며 경고를 출력한다. F9/오른쪽 B 버튼 재중앙 정렬은 위치와 방향을 함께 보정한다. 차선 인식용 RenderTexture/카메라 Transform은 수정하지 않는다. Unity 참조 C# 컴파일 통과(기존 경고), 실제 Quest 착용 시점 검증은 미수행.

@@ -64,11 +64,13 @@ namespace ShipRobot.EquipmentMonitoring
                 started = true;
                 return null;
             }
-            if (action != "mission_start") return "Unsupported robot action";
+            if (action != "mission_start" && action != "mission_start_a" && action != "mission_start_b") return "Unsupported robot action";
             if (started || navigation.State != NavigationCoordinator.MissionState.Idle)
                 return "Mission already started. Restart Unity Play for a new run.";
             started = true;
-            navigation.StartEquipmentAAndBMission();
+            if (action == "mission_start_a") navigation.StartEquipmentAMission();
+            else if (action == "mission_start_b") navigation.StartEquipmentBMission();
+            else navigation.StartEquipmentAAndBMission();
             return navigation.State == NavigationCoordinator.MissionState.Fault ? navigation.StatusDetail : null;
         }
 

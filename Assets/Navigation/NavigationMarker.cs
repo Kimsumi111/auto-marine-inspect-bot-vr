@@ -8,7 +8,7 @@ namespace ShipRobot.Navigation
         [SerializeField] private PlantNodeId nodeId;
         [SerializeField, Min(0.01f)] private float physicalSizeMetres = 0.30f;
 
-        public enum MarkerRole { Entry, Centre }
+        public enum MarkerRole { Entry, Centre, Segment }
         [SerializeField] private MarkerRole role;
         [SerializeField] private NavigationMarker centreMarker;
         [Tooltip("Virtual floor-plan NFC zone; not a physical NFC read range.")]
@@ -20,8 +20,24 @@ namespace ShipRobot.Navigation
         private GUIStyle nfcLabelStyle;
         private Color ZoneColour => role == MarkerRole.Entry
             ? new Color(0.05f, 0.9f, 1f) : new Color(1f, 0.25f, 0.85f);
-        private string ZoneLabel => $"NFC {(role == MarkerRole.Entry ? "ENTRY" : "CENTRE")} | {nodeId}\nR {proximityRadius:F2} m  X {transform.position.x:F2}  Z {transform.position.z:F2}";
+        private string ZoneLabel => $"NFC {role.ToString().ToUpperInvariant()} | {nodeId}\nR {proximityRadius:F2} m  X {transform.position.x:F2}  Z {transform.position.z:F2}";
+        public static NavigationMarker CreateSegment(Transform parent, string label, PlantNodeId destination, Vector3 position)
+        {
+            var go = new GameObject(label);
+            go.transform.SetParent(parent, true);
+            go.transform.position = position;
+            var zone = go.AddComponent<NavigationMarker>();
+            zone.nodeId = destination;
+            zone.role = MarkerRole.Segment;
+            zone.proximityRadius = 0.20f;
+            return zone;
+        }
+
         public float ProximityRadius => proximityRadius;
+        [SerializeField] private bool directionalEntry;
+        [SerializeField] private PlantNodeId incomingNode;
+        public bool DirectionalEntry => directionalEntry;
+        public PlantNodeId IncomingNode => incomingNode;
         public MarkerRole Role => role;
         public NavigationMarker CentreMarker => centreMarker;
 
