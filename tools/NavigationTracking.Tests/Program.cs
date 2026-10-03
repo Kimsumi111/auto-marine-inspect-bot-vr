@@ -88,3 +88,11 @@ Check(BoundaryAlignmentControl.ConstrainToExitHeading(-.2f, -13, 15, .4f) == -.2
 Check(BoundaryAlignmentControl.ConstrainToExitHeading(.2f, -5, 15, .4f) == .2f,
     "Visual alignment inside permitted heading range remains available");
 Console.WriteLine("PASS: exit-heading correction, direction symmetry, deadband and visual steering constraint.");
+
+Check(IndoorProximity.Contains(0, 0, .45f), "NFC reader at zone centre is inside");
+Check(IndoorProximity.Contains(.45f, 0, .45f), "NFC boundary is included");
+Check(!IndoorProximity.Contains(.46f, 0, .45f), "NFC outside zone does not trigger");
+Check(!IndoorProximity.Contains(.4f, .4f, .45f), "NFC uses a circle, not a square");
+Check(IndoorProximity.Contains(-.2f, -.2f, .45f), "NFC works across negative map coordinates");
+Check(!IndoorProximity.Contains(float.NaN, 0, .45f) && !IndoorProximity.Contains(0, 0, -1), "Invalid NFC samples/radii cannot trigger");
+Console.WriteLine("PASS: virtual NFC centre, boundary, outside, diagonal, signed coordinates and invalid input.");

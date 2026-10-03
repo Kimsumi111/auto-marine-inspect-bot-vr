@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Text;
 using System.IO;
@@ -26,6 +26,8 @@ namespace ShipRobot.Navigation
             public PlantNodeId junctionNode;
             public PlantNodeId exitNode;
             [Min(0f)] public float approachDistance;
+            public bool useWorldTurnPosition;
+            public Vector3 worldTurnPosition;
             [Range(0.05f, 1f)] public float approachCommand;
             [Range(0.05f, 1f)] public float searchTurnCommand;
         }
@@ -54,10 +56,34 @@ namespace ShipRobot.Navigation
         [SerializeField, Range(0f, 1f)] private float minimumMarkerConfidence = 0.45f;
         [SerializeField, Min(1)] private int requiredMarkerFrames = 3;
 
+        [Header("Virtual NFC / ideal UWB simulation")]
+        [SerializeField] private bool useIndoorSensorSimulation = true;
+        [SerializeField] private SimulatedIndoorSensors indoorSensors;
+        public bool UsesIndoorSensorSimulation => useIndoorSensorSimulation;
+
+        [Header("Simulation world-coordinate turns")]
+        [SerializeField] private bool useAbsoluteTurns = true;
+        [SerializeField, Min(0.01f)] private float turnPositionTolerance = 0.35f;
+        [SerializeField, Range(0.5f, 10f)] private float turnYawTolerance = 3f;
+        [SerializeField, Min(1f)] private float absoluteTurnStageTimeout = 45f;
+        private Vector3 absoluteTurnPosition;
+        private NavigationMarker activeCentreMarker;
+        private bool centreConfirmed;
+        [Header("Tag transition pause")]
+        [SerializeField, Min(0f)] private float entryTagDelay = 0.30f;
+        [SerializeField, Min(0f)] private float centreTagDelay = 0.30f;
+        private float entryTransitionAt = -1f;
+        private float centreTransitionAt = -1f;
+        private float pendingPathDeflection;
+        private readonly FreshDetectionStreak entryQrStreak = new();
+        private readonly FreshDetectionStreak centreQrStreak = new();
+        private float absoluteStageStarted;
+        [SerializeField, Range(0f, 1f)] private float turnExitConfidence = 0.60f;
+
         [Header("Approach to junction centre")]
         [SerializeField, Min(0f)] private float minimumApproachDistance = 0.10f;
         [SerializeField, Min(0f)] private float postAvoidanceMinimumApproachDistance = 0.50f;
-        [SerializeField, Min(0.1f)] private float maximumApproachDistance = 1.50f;
+        [SerializeField, Min(0.1f)] private float maximumApproachDistance = 1.35f;
         [SerializeField, Min(1)] private int requiredSideLossFrames = 30;
         [SerializeField, Range(0.05f, 1f)] private float approachCommand = 0.16f;
 
@@ -71,7 +97,7 @@ namespace ShipRobot.Navigation
         [SerializeField, Min(0.1f)] private float maximumExitLaneProbeDistance = 1.2f;
         [SerializeField, Range(0.05f, 1f)] private float exitLaneProbeCommand = 0.10f;
         [SerializeField, Range(0f, 1f)] private float minimumPairConfidence = 0.10f;
-        [SerializeField, Min(1)] private int requiredPairFrames = 3;
+        [SerializeField, Min(1)] private int requiredPairFrames = 1;
 
         [Header("Virtual centre-line alignment")]
         [SerializeField, Min(0f)] private float visualLateralGain = 0.80f;
@@ -194,6 +220,9 @@ namespace ShipRobot.Navigation
         private bool drivingLogFailed;
         private float nextDrivingLogTime;
         private string lastLoggedState;
+        private string nfcDecision = "not_checked";
+        private string lastLoggedNfcDecision;
+        [SerializeField, Min(0.02f)] private float diagnosticLogInterval = 0.05f;
 
         private static string LogNumber(double value) => value.ToString("F4", CultureInfo.InvariantCulture);
 
@@ -201,8 +230,8 @@ namespace ShipRobot.Navigation
         {
             string state = State.ToString();
             bool changed = state != lastLoggedState;
-            if (changed || Time.time >= nextDrivingLogTime)
-                RecordDrivingLog(changed ? "state_change" : "sample");
+            if (changed || nfcDecision != lastLoggedNfcDecision || Time.time >= nextDrivingLogTime)
+                RecordDrivingLog(changed ? "state_change" : nfcDecision != lastLoggedNfcDecision ? "nfc_decision" : "sample");
         }
 
         private void RecordDrivingLog(string eventName)
@@ -221,9 +250,14 @@ namespace ShipRobot.Navigation
                         "pair", "pair_confidence", "image_timestamp", "image_age", "manual_control", "manual_move_request",
                         "manual_turn_request", "applied_move", "applied_turn", "drive_enabled", "safety_stop", "safety_scale",
                         "avoidance_paused", "align_travel", "search_advance", "lost_images", "align_frames",
-                        "align_angle_gain", "align_lateral_gain", "align_turn_limit", "detail");
+                        "align_angle_gain", "align_lateral_gain", "align_turn_limit", "detail", "nfc_decision", "entry_delay_remaining", "centre_delay_remaining", "target_route_index", "indoor_mode", "absolute_mode", "centre_confirmed", "position_diagnostics_json");
                     Debug.Log($"Navigation driving log: {path}", this);
                 }
+                NavigationMarker diagnosticEntry = null;
+                if (routeGraph != null && targetRouteIndex >= 0 && targetRouteIndex < activeRoute.Count)
+                    routeGraph.TryGetMarker(activeRoute[targetRouteIndex], out diagnosticEntry);
+                string positionDiagnostics = NavigationPositionDiagnostics.Capture(laneFollower.transform, indoorSensors,
+                    diagnosticEntry, diagnosticEntry != null ? diagnosticEntry.CentreMarker : null);
                 bool usable = laneFollower.TryGetLaneDetection(out HsvLaneDetector.Detection d);
                 Vector3 p = laneFollower.transform.position;
                 float yaw = laneFollower.transform.eulerAngles.y;
@@ -241,9 +275,14 @@ namespace ShipRobot.Navigation
                     laneFollower.IsSafetyStopped.ToString(), LogNumber(laneFollower.SafetySpeedScale), avoidancePaused.ToString(),
                     LogNumber(PlanarDistance(motionStartPosition, p)), LogNumber(PlanarDistance(exitSearchStartPosition, p)),
                     pairLostFrames.ToString(), alignedFrames.ToString(), LogNumber(visualHeadingGain), LogNumber(visualLateralGain),
-                    LogNumber(maximumVisualTurn), statusDetail);
+                    LogNumber(maximumVisualTurn), statusDetail, nfcDecision,
+                    entryTransitionAt < 0f ? "" : LogNumber(Mathf.Max(0f, entryTransitionAt - Time.time)),
+                    centreTransitionAt < 0f ? "" : LogNumber(Mathf.Max(0f, centreTransitionAt - Time.time)),
+                    targetRouteIndex.ToString(), useIndoorSensorSimulation.ToString(), useAbsoluteTurns.ToString(),
+                    centreConfirmed.ToString(), positionDiagnostics);
                 lastLoggedState = State.ToString();
-                nextDrivingLogTime = Time.time + (State == MissionState.Idle || State == MissionState.Fault || State == MissionState.Completed ? 1f : 0.10f);
+                lastLoggedNfcDecision = nfcDecision;
+                nextDrivingLogTime = Time.time + (State == MissionState.Idle || State == MissionState.Fault || State == MissionState.Completed ? 1f : diagnosticLogInterval);
             }
             catch (Exception ex)
             {
@@ -263,8 +302,28 @@ namespace ShipRobot.Navigation
         private GUIStyle titleStyle;
         private GUIStyle statusStyle;
 
+        public bool AllowsMarkerDetection(NavigationMarker marker)
+        {
+            if (marker == null) return false;
+            if (State == MissionState.ApproachingTurnCenter)
+                return marker.Role == NavigationMarker.MarkerRole.Centre &&
+                    marker == activeCentreMarker && marker.NodeId == CurrentNode;
+            return marker.Role == NavigationMarker.MarkerRole.Entry;
+        }
+
+        private void PrepareIndoorSensors()
+        {
+            if (!useIndoorSensorSimulation || laneFollower == null) return;
+            useAbsoluteTurns = true;
+            if (indoorSensors == null)
+                indoorSensors = laneFollower.GetComponent<SimulatedIndoorSensors>() ??
+                    laneFollower.gameObject.AddComponent<SimulatedIndoorSensors>();
+        }
+
         private void Awake()
         {
+            PrepareIndoorSensors();
+            markerSource?.BindNavigation(this);
             CurrentNode = initialNode;
             State = MissionState.Idle;
             laneFollower?.SetDriveEnabled(false);
@@ -296,8 +355,27 @@ namespace ShipRobot.Navigation
                 // Avoidance travel/time is not junction approach/fallback progress.
                 motionStartPosition += laneFollower.transform.position - pausePosition;
                 fallbackStartTime += Time.time - pauseStarted;
+                absoluteStageStarted += Time.time - pauseStarted;
+                if (entryTransitionAt >= 0f) entryTransitionAt = Time.time + entryTagDelay;
+                centreTransitionAt = -1f;
+                exitPairStreak.Reset();
+                entryQrStreak.Reset();
+                centreQrStreak.Reset();
                 markerFrames = sideLossFrames = pairFrames = alignedFrames = normalLaneLostFrames = 0;
                 avoidancePaused = false;
+            }
+            if (entryTransitionAt >= 0f && IsMotionRequested)
+            {
+                laneFollower.SetManualCommand(0f, 0f);
+                statusDetail = $"Entry sensor confirmed; transition in {Mathf.Max(0f, entryTransitionAt - Time.time):F2}s";
+                if (Time.time >= entryTransitionAt)
+                {
+                    entryTransitionAt = -1f;
+                    nfcDecision = "entry:delay_completed";
+                    RecordDrivingLog("entry_transition_ready");
+                    ArriveAtTargetNode();
+                }
+                return;
             }
             switch (State)
             {
@@ -332,8 +410,18 @@ namespace ShipRobot.Navigation
             if (TryBeginEquipmentInspection())
                 return;
 
-            if (TryArriveAtTargetAfterAvoidance())
+            if (useAbsoluteTurns && TryEnterQrJunction())
                 return;
+            if (!useAbsoluteTurns && TryArriveAtTargetAfterAvoidance())
+                return;
+
+            if (useIndoorSensorSimulation)
+            {
+                CountUnusableLaneFrames();
+                statusDetail = $"SIM NFC: following to entry {activeRoute[targetRouteIndex]}";
+                if (normalLaneLostFrames >= laneLostFramesBeforeFallback) EnterStraightMarkerFallback();
+                return;
+            }
 
             PlantNodeId target = activeRoute[targetRouteIndex];
             bool targetVisible = markerSource.TryGetLatestObservation(out MarkerObservation observation) &&
@@ -363,7 +451,7 @@ namespace ShipRobot.Navigation
                 return;
             }
 
-            if (distance > junctionActionDistance)
+            if (distance > junctionActionDistance || (useAbsoluteTurns && targetRouteIndex < activeRoute.Count - 1))
             {
                 markerFrames = 0;
                 State = MissionState.FollowingLane;
@@ -402,7 +490,7 @@ namespace ShipRobot.Navigation
                 Fail("Mission planner is missing");
                 return;
             }
-            if (markerSource != null && markerSource.TryGetLatestObservation(out MarkerObservation observation) &&
+            if (!useIndoorSensorSimulation && markerSource != null && markerSource.TryGetLatestObservation(out MarkerObservation observation) &&
                 observation.confidence >= minimumMarkerConfidence &&
                 observation.cameraRelativePosition.magnitude <= junctionActionDistance * 1.5f)
                 CurrentNode = observation.nodeId;
@@ -464,13 +552,31 @@ namespace ShipRobot.Navigation
 
         private void StartRoute(IReadOnlyList<PlantNodeId> route, ActiveMission mission)
         {
+            PrepareIndoorSensors();
             if (!ConnectionsReady() || route == null || route.Count < 2)
             {
                 Fail("Route is empty or setup is incomplete");
                 return;
             }
+            nfcDecision = "not_checked";
+            entryTransitionAt = centreTransitionAt = -1f;
             activeRoute.Clear();
             for (int i = 0; i < route.Count; i++) activeRoute.Add(route[i]);
+            if (useAbsoluteTurns)
+            {
+                for (int i = 1; i < activeRoute.Count - 1; i++)
+                    if (TryGetDemoTurnCentre(activeRoute[i - 1], activeRoute[i], out Vector3 point, out _) &&
+                        routeGraph.TryGetMarker(activeRoute[i], out NavigationMarker marker))
+                    {
+                        foreach (ManeuverOverride maneuver in maneuverOverrides ?? Array.Empty<ManeuverOverride>())
+                            if (maneuver.entryNode == activeRoute[i - 1] && maneuver.junctionNode == activeRoute[i] &&
+                                maneuver.exitNode == activeRoute[i + 1] && maneuver.useWorldTurnPosition)
+                            { point = maneuver.worldTurnPosition; break; }
+                        marker.EnsureCentre(point);
+                    }
+                markerSource?.RefreshMarkerList();
+            }
+            entryQrStreak.Reset();
             activeMission = mission;
             avoidanceInterruptedCurrentLeg = false;
             CurrentNode = activeRoute[0];
@@ -560,13 +666,29 @@ namespace ShipRobot.Navigation
                 return;
             }
 
-            if (pathDeflection <= straightDirectionTolerance)
+            pendingPathDeflection = pathDeflection;
+            if (!useAbsoluteTurns && pathDeflection <= straightDirectionTolerance)
             {
                 BeginStraightThroughJunction(pathDeflection);
                 return;
             }
 
             ResolveManeuver(entry, CurrentNode, exit);
+            if (useAbsoluteTurns)
+            {
+                if (!routeGraph.TryGetMarker(CurrentNode, out NavigationMarker entryMarker) ||
+                    entryMarker.CentreMarker == null)
+                {
+                    Fail("Central QR is not configured");
+                    return;
+                }
+                activeCentreMarker = entryMarker.CentreMarker;
+                absoluteTurnPosition = activeCentreMarker.transform.position;
+                centreTransitionAt = -1f;
+                centreConfirmed = false;
+                centreQrStreak.Reset();
+                absoluteStageStarted = Time.time;
+            }
             // Use the route's turn direction, not the remaining heading error on a re-search.
             TryCalculateEdgeYaw(entry, CurrentNode, out float incomingYaw);
             alignmentReference = Mathf.DeltaAngle(incomingYaw, desiredExitYaw) < 0f
@@ -585,6 +707,11 @@ namespace ShipRobot.Navigation
 
         private void UpdateApproach()
         {
+            if (useAbsoluteTurns)
+            {
+                UpdateAbsoluteApproach();
+                return;
+            }
             float travelled = PlanarDistance(motionStartPosition, laneFollower.transform.position);
             bool observationFresh = laneFollower.TryGetBoundarySides(out HsvLaneDetector.Detection detection);
             bool bothSidesVisible = observationFresh &&
@@ -625,6 +752,152 @@ namespace ShipRobot.Navigation
             laneFollower.SetManualCommand(activeApproachCommand, 0f);
         }
 
+        private bool TryEnterQrJunction()
+        {
+            if (useIndoorSensorSimulation)
+            {
+                if (targetRouteIndex >= activeRoute.Count) { nfcDecision = "entry:no_target"; return false; }
+                if (!routeGraph.TryGetMarker(activeRoute[targetRouteIndex], out NavigationMarker zone))
+                { nfcDecision = "entry:zone_missing"; return false; }
+                if (zone.Role != NavigationMarker.MarkerRole.Entry) { nfcDecision = "entry:wrong_role"; return false; }
+                if (indoorSensors == null || !indoorSensors.isActiveAndEnabled) { nfcDecision = "entry:sensor_disabled"; return false; }
+                if (!zone.isActiveAndEnabled) { nfcDecision = "entry:zone_disabled"; return false; }
+                if (!indoorSensors.IsInside(zone)) { nfcDecision = "entry:outside_radius"; return false; }
+                nfcDecision = "entry:detected_delay_pending";
+                entryTransitionAt = Time.time + entryTagDelay;
+                laneFollower.SetManualCommand(0f, 0f);
+                statusDetail = $"SIM NFC entry {zone.NodeId}; pause {entryTagDelay:F2}s";
+                return true;
+            }
+            if (targetRouteIndex >= activeRoute.Count - 1) return false;
+            if (!routeGraph.TryGetMarker(activeRoute[targetRouteIndex], out NavigationMarker entryMarker))
+                return false;
+            bool seen = markerSource.TryObserveMarker(entryMarker, out MarkerObservation observation) &&
+                observation.confidence >= minimumMarkerConfidence &&
+                observation.cameraRelativePosition.magnitude <= markerDetectionDistance;
+            int count = entryQrStreak.Observe(observation.timestamp, seen);
+            if (!seen) return false;
+            // A visible entry QR owns motion even when the lane has already ended.
+            laneFollower.SetManualCommand(approachCommand, 0f);
+            statusDetail = $"Entry QR {entryMarker.NodeId}: {count}/{requiredMarkerFrames}; advancing";
+            if (count >= requiredMarkerFrames)
+            {
+                entryQrStreak.Reset();
+                entryTransitionAt = Time.time + entryTagDelay;
+                laneFollower.SetManualCommand(0f, 0f);
+                statusDetail = $"Entry QR confirmed; pause {entryTagDelay:F2}s";
+            }
+            return true;
+        }
+
+        // Simulation ground truth: the target stays in world space even after avoidance.
+        private void UpdateAbsoluteApproach()
+        {
+            Vector3 position = laneFollower.transform.position;
+            if (useIndoorSensorSimulation && !indoorSensors.TryGetPosition(out position))
+            { Fail("SIM UWB position unavailable"); return; }
+            Vector3 delta = Vector3.ProjectOnPlane(absoluteTurnPosition - position, Vector3.up);
+            float distance = delta.magnitude;
+            bool insideCentre = useIndoorSensorSimulation && activeCentreMarker != null &&
+                activeCentreMarker.Role == NavigationMarker.MarkerRole.Centre &&
+                activeCentreMarker.NodeId == CurrentNode && indoorSensors.IsInside(activeCentreMarker);
+            if (useIndoorSensorSimulation)
+            {
+                centreConfirmed = insideCentre;
+                nfcDecision = insideCentre ? "centre:inside_delay_pending" : "centre:not_inside_or_invalid";
+            }
+            else
+            {
+                bool seen = markerSource.TryObserveMarker(activeCentreMarker, out MarkerObservation observation) &&
+                    observation.confidence >= minimumMarkerConfidence;
+                if (centreQrStreak.Observe(observation.timestamp, seen) >= requiredMarkerFrames) centreConfirmed = true;
+            }
+            if (Time.time - absoluteStageStarted > absoluteTurnStageTimeout)
+            {
+                Fail($"World turn point not reached: target={absoluteTurnPosition}, remaining={distance:F2} m");
+                return;
+            }
+            // Allow 15 cm of drift during the stop delay without restarting arrival.
+            bool settlingAtCentre = centreTransitionAt >= 0f && distance <= turnPositionTolerance + 0.15f;
+            if (useIndoorSensorSimulation ? insideCentre : distance <= turnPositionTolerance || settlingAtCentre)
+            {
+                laneFollower.SetManualCommand(0f, 0f);
+                if (!centreConfirmed)
+                {
+                    statusDetail = "At central point; waiting for central QR confirmation";
+                    return;
+                }
+                if (centreTransitionAt < 0f) centreTransitionAt = Time.time + centreTagDelay;
+                if (Time.time < centreTransitionAt)
+                {
+                    statusDetail = $"Centre sensor reached; transition in {centreTransitionAt - Time.time:F2}s";
+                    return;
+                }
+                centreTransitionAt = -1f;
+                if (pendingPathDeflection <= straightDirectionTolerance)
+                    FinishAlignment("central QR reached; straight exit");
+                else
+                    BeginExitLaneSearch();
+                return;
+            }
+            centreTransitionAt = -1f;
+            if (useIndoorSensorSimulation)
+            {
+                DriveWithIndoorPosition(absoluteTurnPosition, activeApproachCommand);
+                return;
+            }
+            float error = Vector3.SignedAngle(laneFollower.transform.forward, delta, Vector3.up);
+            float turn = Mathf.Clamp(error / 45f, -1f, 1f) * activeSearchTurnCommand;
+            float move = Mathf.Abs(error) > 30f ? 0f : activeApproachCommand * Mathf.Clamp(distance / 0.6f, 0.2f, 1f);
+            statusDetail = $"Central QR confirmed={centreConfirmed}, target={absoluteTurnPosition}, remaining={distance:F2} m, heading={error:F1} deg";
+            laneFollower.SetManualCommand(move, turn);
+        }
+
+        private void DriveWithIndoorPosition(Vector3 goal, float speed)
+        {
+            if (!indoorSensors.TryGetPosition(out Vector3 position))
+            { Fail("SIM UWB position unavailable"); return; }
+            Vector3 delta = Vector3.ProjectOnPlane(goal - position, Vector3.up);
+            float error = Vector3.SignedAngle(indoorSensors.HeadingForward, delta, Vector3.up);
+            float turn = Mathf.Clamp(error / 45f, -1f, 1f) * searchTurnCommand;
+            float move = Mathf.Abs(error) > 30f ? 0f : speed * Mathf.Clamp(delta.magnitude / 1.2f, 0.15f, 1f);
+            laneFollower.SetManualCommand(move, turn);
+            statusDetail = $"SIM UWB ideal position={position}, remaining={delta.magnitude:F2} m, heading={error:F1}; awaiting SIM NFC";
+        }
+
+        private void UpdateAbsoluteRotation()
+        {
+            Vector3 position = laneFollower.transform.position;
+            if (useIndoorSensorSimulation && !indoorSensors.TryGetPosition(out position))
+            { Fail("SIM UWB position unavailable"); return; }
+            float distance = PlanarDistance(absoluteTurnPosition, position);
+            float error = Mathf.DeltaAngle(laneFollower.transform.eulerAngles.y, desiredExitYaw);
+            if (Time.time - absoluteStageStarted > absoluteTurnStageTimeout)
+            {
+                Fail($"World turn timeout: position error={distance:F2} m, yaw error={error:F1} deg");
+                return;
+            }
+            // Do not chase a point while turning: stop if physics/avoidance displaced the robot.
+            if (distance > Mathf.Max(0.4f, turnPositionTolerance * 2f))
+            {
+                Fail($"Robot left world turn point by {distance:F2} m; restart after checking the path");
+                return;
+            }
+            bool usable = laneFollower.TryGetLaneDetection(out HsvLaneDetector.Detection detection);
+            float threshold = Mathf.Max(turnExitConfidence, laneFollower.EffectiveMinimumConfidence);
+            bool confident = usable && detection.confidence >= threshold;
+            pairFrames = exitPairStreak.Observe(detection.timestamp, confident);
+            statusDetail = $"World turn target={absoluteTurnPosition}, position error={distance:F2} m, " +
+                $"confidence={detection.confidence:F2}/{threshold:F2}, usable={usable}, stable={pairFrames}/{requiredPairFrames}, " +
+                $"yaw={laneFollower.transform.eulerAngles.y:F1}/{desiredExitYaw:F1}";
+            // Hold as soon as confidence is high; require distinct fresh images before driving.
+            // Absolute yaw only bounds the search; it no longer completes the turn.
+            bool hold = confident || Mathf.Abs(error) <= turnYawTolerance;
+            laneFollower.SetManualCommand(0f, hold ? 0f : Mathf.Clamp(error / 30f, -1f, 1f) * activeSearchTurnCommand);
+            if (pairFrames >= requiredPairFrames)
+                FinishAlignment("lane confidence confirmed; resume forward lane following");
+        }
+
         private bool TryGetDemoTurnCentre(PlantNodeId entry, PlantNodeId junction,
             out Vector3 turnCentre, out Vector3 incomingDirection)
         {
@@ -654,11 +927,23 @@ namespace ShipRobot.Navigation
             State = MissionState.SearchingExitLane;
             Debug.Log($"Navigation transition: exit search node={CurrentNode}, target={activeRoute[targetRouteIndex]}, " +
                       $"yaw={searchStartYaw:F1}, desiredYaw={desiredExitYaw:F1}, position={laneFollower.transform.position}", this);
-            laneFollower.SetManualCommand(GetExitSearchMoveCommand(), GetExitHeadingTurnCommand(plannedAngle));
+            if (useAbsoluteTurns)
+            {
+                absoluteStageStarted = Time.time;
+                exitPairStreak.Reset();
+                laneFollower.SetManualCommand(0f, 0f);
+            }
+            else
+                laneFollower.SetManualCommand(GetExitSearchMoveCommand(), GetExitHeadingTurnCommand(plannedAngle));
         }
 
         private void UpdateExitLaneSearch()
         {
+            if (useAbsoluteTurns)
+            {
+                UpdateAbsoluteRotation();
+                return;
+            }
             float turned = Mathf.Abs(Mathf.DeltaAngle(searchStartYaw, laneFollower.transform.eulerAngles.y));
             if (turned > maximumSearchTurn)
             {
@@ -863,6 +1148,14 @@ namespace ShipRobot.Navigation
 
         private void UpdateStraightThroughJunction()
         {
+            if (useAbsoluteTurns)
+            {
+                if (TryEnterQrJunction()) return;
+                laneFollower.SetManualCommand(straightJunctionCommand, 0f);
+                if (PlanarDistance(motionStartPosition, laneFollower.transform.position) > maximumFallbackDistance)
+                    Fail("Entry QR missing after straight junction");
+                return;
+            }
             if (activeMission == ActiveMission.EquipmentAAndB &&
                 CurrentNode == PlantNodeId.UnderMid &&
                 activeRoute[targetRouteIndex] == PlantNodeId.UnderRight)
@@ -987,7 +1280,9 @@ namespace ShipRobot.Navigation
 
         private void UpdateStraightToNextMarker()
         {
-            if (TryArriveAtTargetAfterAvoidance())
+            if (useAbsoluteTurns && TryEnterQrJunction())
+                return;
+            if (!useAbsoluteTurns && TryArriveAtTargetAfterAvoidance())
                 return;
             float travelled = PlanarDistance(motionStartPosition, laneFollower.transform.position);
             float elapsed = Time.time - fallbackStartTime;
@@ -997,26 +1292,17 @@ namespace ShipRobot.Navigation
                 return;
             }
 
-            PlantNodeId target = activeRoute[targetRouteIndex];
-            if (avoidanceInterruptedCurrentLeg && routeGraph.TryGetMarker(target, out NavigationMarker targetMarker))
+            if (useIndoorSensorSimulation)
             {
-                // After PPO moves the robot sideways, driving straight may never put
-                // the floor marker back in the camera. Use the simulator's route
-                // marker position until close enough to resume the original approach.
-                Collider footprint = laneFollower.GetComponent<Collider>();
-                Vector3 robotCentre = footprint is BoxCollider box
-                    ? laneFollower.transform.TransformPoint(box.center)
-                    : laneFollower.transform.position;
-                Vector3 toMarker = targetMarker.transform.position - robotCentre;
-                toMarker.y = 0f;
-                float headingError = Vector3.SignedAngle(laneFollower.transform.forward, toMarker, Vector3.up);
-                float move = Mathf.Abs(headingError) <= 35f ? fallbackStraightCommand : 0f;
-                float turn = Mathf.Clamp(headingError / 90f, -searchTurnCommand, searchTurnCommand);
-                statusDetail = $"Returning to marker ID {(int)target} after avoidance: " +
-                               $"{toMarker.magnitude:F1} m, heading {headingError:F0} deg";
-                laneFollower.SetManualCommand(move, turn);
+                if (!routeGraph.TryGetMarker(activeRoute[targetRouteIndex], out NavigationMarker entryZone))
+                { Fail("SIM NFC entry zone missing"); return; }
+                // This state advances straight; coordinate guidance belongs to centre approach.
+                laneFollower.SetManualCommand(fallbackStraightCommand, 0f);
+                statusDetail = $"SIM NFC: straight to entry {entryZone.NodeId}; " +
+                    $"travel={travelled:F2}/{maximumFallbackDistance:F2} m, elapsed={elapsed:F1}/{maximumFallbackSeconds:F1}s";
                 return;
             }
+            PlantNodeId target = activeRoute[targetRouteIndex];
             bool visible = markerSource.TryGetLatestObservation(out MarkerObservation observation) &&
                            observation.nodeId == target &&
                            observation.confidence >= minimumMarkerConfidence;
@@ -1030,7 +1316,7 @@ namespace ShipRobot.Navigation
 
             float distance = observation.cameraRelativePosition.magnitude;
             statusDetail = $"Fallback marker ID {(int)target} visible at {distance:F2} m";
-            if (distance > junctionActionDistance)
+            if (distance > junctionActionDistance || (useAbsoluteTurns && targetRouteIndex < activeRoute.Count - 1))
             {
                 markerFrames = 0;
                 laneFollower.SetManualCommand(fallbackStraightCommand, 0f);
@@ -1118,6 +1404,8 @@ namespace ShipRobot.Navigation
         [ContextMenu("Reset Mission")]
         public void ResetMission()
         {
+            nfcDecision = "not_checked";
+            entryTransitionAt = centreTransitionAt = -1f;
             activeRoute.Clear();
             activeMission = ActiveMission.None;
             State = MissionState.Idle;
@@ -1145,7 +1433,7 @@ namespace ShipRobot.Navigation
         }
 
         private bool ConnectionsReady() =>
-            routeGraph != null && missionPlanner != null && markerSource != null && laneFollower != null;
+            routeGraph != null && missionPlanner != null && (useIndoorSensorSimulation ? indoorSensors != null : markerSource != null) && laneFollower != null;
 
         private void Fail(string reason)
         {

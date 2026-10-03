@@ -5,6 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../Assets/Navigation/IndoorProximity.cs" />
     <Compile Include="../../Assets/Navigation/FreshDetectionStreak.cs" />
     <Compile Include="../../Assets/Navigation/BoundaryAlignmentControl.cs" />
     <Compile Include="../../Assets/Navigation/NavigationCsvLog.cs" />

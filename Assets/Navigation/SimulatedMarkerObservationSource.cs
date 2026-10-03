@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 
 namespace ShipRobot.Navigation
 {
@@ -19,6 +19,18 @@ namespace ShipRobot.Navigation
         [SerializeField] private bool drawBoxInsideCameraPreview = true;
         [SerializeField] private Rect cameraPreviewGuiRect = new Rect(10f, 10f, 320f, 180f);
 
+        private NavigationCoordinator navigation;
+        public void BindNavigation(NavigationCoordinator coordinator)
+        {
+            navigation = coordinator;
+            hasObservation = false;
+            latestMarker = null;
+        }
+
+        private bool IsAllowed(NavigationMarker marker) => marker != null &&
+            (navigation != null ? navigation.AllowsMarkerDetection(marker) :
+                marker.Role == NavigationMarker.MarkerRole.Entry);
+
         private NavigationMarker[] markers;
         private MarkerObservation latestObservation;
         private NavigationMarker latestMarker;
@@ -37,6 +49,8 @@ namespace ShipRobot.Navigation
 
         private void Update()
         {
+            if (navigation != null && navigation.UsesIndoorSensorSimulation)
+            { hasObservation = false; return; }
             if (Time.time < nextRefreshTime)
                 return;
             nextRefreshTime = Time.time + refreshInterval;
@@ -52,10 +66,17 @@ namespace ShipRobot.Navigation
         public bool TryGetLatestObservation(out MarkerObservation observation)
         {
             observation = latestObservation;
-            return hasObservation;
+            return hasObservation && IsAllowed(latestMarker);
         }
 
-        private void DetectVisibleMarker()
+        public bool TryObserveMarker(NavigationMarker expected, out MarkerObservation observation)
+        {
+            DetectVisibleMarker(expected);
+            observation = latestObservation;
+            return hasObservation && latestMarker == expected;
+        }
+
+        private void DetectVisibleMarker(NavigationMarker expected = null)
         {
             hasObservation = false;
             latestMarker = null;
@@ -67,7 +88,9 @@ namespace ShipRobot.Navigation
             float bestScore = float.NegativeInfinity;
             foreach (NavigationMarker marker in markers)
             {
-                if (marker == null || !marker.isActiveAndEnabled)
+                if (marker == null || !marker.isActiveAndEnabled ||
+                    (expected != null && marker != expected) ||
+                    !IsAllowed(marker))
                     continue;
 
                 Transform visual = marker.transform.Find("AprilTagVisual");
@@ -139,7 +162,7 @@ namespace ShipRobot.Navigation
 
         private void OnGUI()
         {
-            if (!showOverlay || markerCamera == null)
+            if ((navigation != null && navigation.UsesIndoorSensorSimulation) || !showOverlay || markerCamera == null)
                 return;
             GUI.depth = -100;
             EnsureStyles();
@@ -148,7 +171,7 @@ namespace ShipRobot.Navigation
             float guiTop = drawBoxInsideCameraPreview ? cameraRect.y : Screen.height - cameraRect.yMax;
             var statusRect = new Rect(cameraRect.x + 8f, guiTop + 8f, Mathf.Max(260f, cameraRect.width - 16f), 48f);
 
-            if (!hasObservation || latestMarker == null)
+            if (!hasObservation || !IsAllowed(latestMarker))
             {
                 GUI.Label(statusRect, "SIM MARKER: none visible", missingStyle);
                 return;
@@ -157,7 +180,7 @@ namespace ShipRobot.Navigation
             DrawBorder(latestGuiRect, Color.green, 3f);
             float distance = latestObservation.cameraRelativePosition.magnitude;
             GUI.Label(statusRect,
-                $"SIM MARKER: ID {(int)latestObservation.nodeId}  {latestObservation.nodeId}\n" +
+                $"SIM MARKER: ID {(int)latestObservation.nodeId}  {latestObservation.nodeId} {latestMarker.Role}\n" +
                 $"distance {distance:F2} m   confidence {latestObservation.confidence:F2}",
                 detectedStyle);
         }

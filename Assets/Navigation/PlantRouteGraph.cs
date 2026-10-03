@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -133,7 +133,7 @@ namespace ShipRobot.Navigation
 
             foreach (NavigationMarker marker in markers)
             {
-                if (marker == null)
+                if (marker == null || marker.Role != NavigationMarker.MarkerRole.Entry)
                     continue;
                 if (markerById.ContainsKey(marker.NodeId))
                 {

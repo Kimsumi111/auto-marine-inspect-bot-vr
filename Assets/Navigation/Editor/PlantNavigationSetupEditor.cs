@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using ShipRobot.LaneFollowing;
 using ShipRobot.Navigation;
@@ -104,6 +104,33 @@ namespace ShipRobot.Navigation.Editor
             Selection.activeGameObject = root;
             EditorSceneManager.MarkSceneDirty(root.scene);
             Debug.Log("AprilTag navigation setup complete: six markers, route graph, and mission planner created.", root);
+        }
+
+        [MenuItem("Tools/Ship Robot/Create Virtual NFC Zones")]
+        [MenuItem("Tools/Ship Robot/Create Entry-Centre QR Pairs")]
+        public static void CreateEntryCentrePairs()
+        {
+            if (EditorApplication.isPlaying) return;
+            PlantRouteGraph graph = UnityEngine.Object.FindFirstObjectByType<PlantRouteGraph>();
+            if (graph == null) { Debug.LogError("Navigation graph is missing"); return; }
+            graph.FindMarkersInScene();
+            var entries = new[] { PlantNodeId.UnderMid, PlantNodeId.UpperMid, PlantNodeId.UpperLeft,
+                PlantNodeId.UnderLeft, PlantNodeId.UnderMid, PlantNodeId.UnderRight };
+            var junctions = new[] { PlantNodeId.UpperMid, PlantNodeId.UpperLeft, PlantNodeId.UnderLeft,
+                PlantNodeId.UnderMid, PlantNodeId.UnderRight, PlantNodeId.UpperRight };
+            for (int i = 0; i < entries.Length; i++)
+            {
+                if (!graph.TryGetMarker(entries[i], out NavigationMarker entry) ||
+                    !graph.TryGetMarker(junctions[i], out NavigationMarker junction) ||
+                    junction.CentreMarker != null) continue;
+                Vector3 direction = Vector3.ProjectOnPlane(junction.transform.position - entry.transform.position, Vector3.up).normalized;
+                Undo.RecordObject(junction, "Assign central simulation QR");
+                NavigationMarker centre = junction.EnsureCentre(junction.transform.position + direction * 0.65f);
+                Undo.RegisterCreatedObjectUndo(centre.gameObject, "Create central simulation QR");
+                EditorUtility.SetDirty(junction);
+            }
+            EditorSceneManager.MarkSceneDirty(graph.gameObject.scene);
+            Debug.Log("Entry/centre simulation markers created. Adjust CentreQR transforms to junction centres, then save the scene.");
         }
 
         [MenuItem("Tools/Ship Robot/Setup Dual Front ToF Sensors")]
@@ -407,6 +434,14 @@ namespace ShipRobot.Navigation.Editor
 
         private static void ApplyRelaxedVisionSettings(SerializedObject coordinator)
         {
+            coordinator.FindProperty("useIndoorSensorSimulation").boolValue = true;
+            coordinator.FindProperty("useAbsoluteTurns").boolValue = true;
+            coordinator.FindProperty("entryTagDelay").floatValue = 0.30f;
+            coordinator.FindProperty("centreTagDelay").floatValue = 0.30f;
+            coordinator.FindProperty("turnPositionTolerance").floatValue = 0.35f;
+            coordinator.FindProperty("turnExitConfidence").floatValue = 0.60f;
+            coordinator.FindProperty("turnYawTolerance").floatValue = 3f;
+            coordinator.FindProperty("absoluteTurnStageTimeout").floatValue = 45f;
             coordinator.FindProperty("markerDetectionDistance").floatValue = 4.00f;
             coordinator.FindProperty("junctionActionDistance").floatValue = 1.20f;
             coordinator.FindProperty("minimumTurnBeforePair").floatValue = 10f;
@@ -417,7 +452,7 @@ namespace ShipRobot.Navigation.Editor
             coordinator.FindProperty("maximumExitLaneProbeDistance").floatValue = 1.2f;
             coordinator.FindProperty("exitLaneProbeCommand").floatValue = 0.10f;
             coordinator.FindProperty("minimumPairConfidence").floatValue = 0.10f;
-            coordinator.FindProperty("requiredPairFrames").intValue = 3;
+            coordinator.FindProperty("requiredPairFrames").intValue = 1;
             coordinator.FindProperty("alignedLateralTolerance").floatValue = 0.35f;
             coordinator.FindProperty("alignedHeadingTolerance").floatValue = 0.40f;
             coordinator.FindProperty("requiredAlignedFrames").intValue = 2;
@@ -444,7 +479,7 @@ namespace ShipRobot.Navigation.Editor
             coordinator.FindProperty("maximumFallbackDistance").floatValue = 8f;
             coordinator.FindProperty("maximumFallbackSeconds").floatValue = 30f;
             coordinator.FindProperty("minimumApproachDistance").floatValue = 0.10f;
-            coordinator.FindProperty("maximumApproachDistance").floatValue = 1.50f;
+            coordinator.FindProperty("maximumApproachDistance").floatValue = 1.35f;
             coordinator.FindProperty("requiredSideLossFrames").intValue = 30;
             coordinator.FindProperty("straightDirectionTolerance").floatValue = 25f;
             coordinator.FindProperty("straightJunctionCommand").floatValue = 0.14f;
@@ -474,7 +509,7 @@ namespace ShipRobot.Navigation.Editor
                 item.FindPropertyRelative("entryNode").intValue = (int)transitions[i, 0];
                 item.FindPropertyRelative("junctionNode").intValue = (int)transitions[i, 1];
                 item.FindPropertyRelative("exitNode").intValue = (int)transitions[i, 2];
-                item.FindPropertyRelative("approachDistance").floatValue = 1.50f;
+                item.FindPropertyRelative("approachDistance").floatValue = 1.35f;
                 item.FindPropertyRelative("approachCommand").floatValue = 0.16f;
                 item.FindPropertyRelative("searchTurnCommand").floatValue =
                     transitions[i, 1] == PlantNodeId.UnderRight ? 0.24f : 0.20f;

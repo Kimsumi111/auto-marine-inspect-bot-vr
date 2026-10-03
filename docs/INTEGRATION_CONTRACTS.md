@@ -175,3 +175,21 @@ WPF 환경 설정: `SHIP_ROBOT_PROJECT`, `SHIP_DIAGNOSIS_PYTHON`. 상세 실행�
 테스트별 전제조건은 각 기존 README와 csproj를 확인한다. 이 목록은 테스트 실행 성공 기록이 아니다.
 
 OpenAI Agent와 VR은 `backend.main:app`/8767 단일 서비스다. `backend.vr_main:app`은 같은 앱의 별칭이다. 기존 8000 계약은 대체되었으며 `API_INTEGRATION_GAP.md`를 따른다.
+
+2026-10-03 Unity 모의 교차점 마커: NavigationMarker.Role은 Entry/Centre이며 Entry.CentreMarker가 중앙 목표를 참조한다. 그래프 노드 ID는 Entry 기준으로 유지한다. 중간 교차점은 진입 QR 확인 → 중앙 QR 확인 및 좌표 도착 → 회전 → 출구 방향 범위의 차선 confidence 연속 확인 순서이다. REST/TCP 메시지는 변경하지 않았다. 실제 픽셀 해독이 아닌 씬 기반 관측이며 배치/검증 한계는 PROJECT_CONTEXT의 해당 변경 기록을 따른다.
+
+2026-10-03: 사용자 요청으로 SimulatedMarkerObservationSource의 자동 스캔·지정 마커 조회·최신 관측 조회·화면 표시 모두 같은 주행 상태 필터를 적용한다. FollowingLane에서는 Entry만, ApproachingTurnCenter에서는 현재 교차점에 연결된 Centre만 허용한다. 상태 전환 직전의 다른 역할 캐시도 조회/표시하지 않는다. 기존 자동 스캔이 접근 중 Entry로 표시를 덮어쓰던 경로를 제거했다. 다른 상태는 기본 Entry 필터를 사용한다. confidence 0.60 한 프레임 회전 종료 설정은 유지했다. Unity 참조 컴파일 통과, 실제 Play 미검증.
+
+2026-10-03: 태그 상태 전환 전 정지 대기 추가. 중간 교차점 진입 QR 확인 후 entryTagDelay(0.30초) 동안 수동 이동/회전 명령을 0으로 두고 중앙 접근으로 전환한다. 중앙 QR 확인 및 위치 도착 후 centreTagDelay(0.30초) 정지 후 회전(직진 경로는 차선 추종)한다. 중앙 도착 허용 범위를 벗어나면 중앙 대기는 다시 시작한다. 회피/안전 정지 복귀 시 대기를 재시작하고 임무 시작/리셋 시 예약을 제거한다. 기존 FSM 상태 안의 비차단 타이머이며 새로운 상태 enum은 추가하지 않았다. 회전 종료 confidence 0.60 한 프레임 조건은 유지한다. 코드·씬·생성 도구 동기화 및 런타임/Editor 참조 컴파일 통과. 실제 Play의 정지·전환 타이밍은 미검증이다.
+
+2026-10-03: navigation-20261003-085143 기록에서 중앙 QR 확인=True이나 최소 남은 거리 약 0.30m로 0.15m 도착 조건을 충족하지 못한 것을 확인했다. 도착 허용 거리를 0.35m로 변경(씬/코드/생성 도구)하고, 정지 대기 시작 후에는 추가 0.15m 범위까지 타이머를 유지한다. 그 밖으로 벗어나면 대기를 다시 시작한다. 기존 회전점 이탈 제한은 허용 거리의 2배 계산으로 0.70m가 된다. 중앙 QR 확인·0.3초 대기·confidence 0.60 한 프레임 조건은 유지한다. 런타임/Editor 참조 컴파일 통과. 실제 Play 개선 여부는 미검증이다.
+
+2026-10-03: jetbot_env 기본 도착 판정을 가상 NFC 구역으로 전환했다. Entry/Centre 노드와 기존 FSM을 유지한다. SimulatedIndoorSensors가 10Hz 이상적 UWB 위치를 제공하고 방향은 별도 Unity 입력이다. NFC는 XZ 반경 포함 판정(기본 0.45m)이며 실제 무선 센서 계약이 아니다. 기존 REST/TCP는 변경하지 않았다. 상세 실행·배치·검증 범위는 PROJECT_CONTEXT의 가상 NFC/UWB 항목 참조.
+
+2026-10-03: 사용자 요청으로 StraightToNextMarker의 목표 좌표 조향을 제거했다. 가상 NFC 모드에서는 fallbackStraightCommand 전진/회전 0을 유지하며 Entry NFC를 검사한다. 기존 QR 모드의 회피 후 목표 좌표 조향도 제거했다. 실제 장애물 회피의 우선권은 유지한다. 거리·시간 제한과 도착 후 대기는 유지하며 UWB 목표 조향은 중앙 접근에서 사용한다. 방향 오차를 능동 보정하는 yaw-hold 제어는 추가하지 않았다. 런타임 참조 컴파일 및 해당 분기 정적 확인 통과. 실제 Play 직진/완주는 미검증이다.
+
+2026-10-03: NavigationMarker에 NFC 별도 표시를 추가했다. Entry=청록, Centre=분홍, 바닥 XZ 감지 반경 원/중심 십자/이름·반경·월드 XZ 좌표를 표시한다. Scene은 Gizmos/Handles, Game은 Camera.main 투영 GUI 오버레이를 사용한다. 센서용 RenderTexture에 시각 장식을 렌더링하지 않아 차선 영상 입력을 변경하지 않는다. 표시 바닥 높이는 기본 Y=0.05이며 Show Nfc Display로 끌 수 있다. 실제 마커 좌표/반경은 바꾸지 않았다. Game 오버레이는 MainCamera가 필요하며 VR 헤드셋 내부 표시는 보장하지 않는다. Unity 참조 컴파일 통과, 실제 화면 시각 검증은 미수행이다.
+
+2026-10-03: 주행 CSV에 위치/NFC/FSM 진단 열과 position_diagnostics_json(version=1)을 추가했다. 기존 열은 유지하며 이름으로 열을 읽는다. REST/TCP 계약 변경 없음. 상세 필드와 검증 범위는 PROJECT_CONTEXT 참조.
+
+2026-10-03: 가상 NFC/UWB 기본 위치를 루트 BoxCollider의 TransformPoint(center)로 변경했다. 명시적 Reader가 있으면 우선 사용하며 BoxCollider가 없으면 Rigidbody.worldCenterOfMass, 둘 다 없으면 원점으로 대체한다. 방향과 XZ 거리 계산·지점 배치·반경은 유지했다. 진단 JSON version=2에 positionBasis/readerOffsetFromOrigin을 추가하고 reader.world/local이 실제 사용 기준점을 나타내도록 수정했다. 런타임 참조 컴파일 통과. 이전 092603 주행 기록에 차체 중심 판정을 재적용하면 기존 리더 감지 0회에서 중앙 기준 감지 발생을 확인했다(기록 재계산이며 새 Unity Play/FSM 완주 검증은 아님).
