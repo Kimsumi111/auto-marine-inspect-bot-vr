@@ -8,6 +8,15 @@ using UnityEngine.XR;
 
 namespace MetaMarine.VR
 {
+    // 제거 가능한 시험 입력의 연결점. 더미 CS 파일을 삭제해도 이 송신기는 컴파일된다.
+    // REST/TCP 필드나 실제 HMD 수집 계약은 바꾸지 않는다.
+    public interface IJetbotGazeOverride
+    {
+        bool IsOverrideEnabled { get; }
+        string GazeOverrideStatus { get; }
+        bool TryGetWorldDirection(out Vector3 direction);
+    }
+
     // VR 앵커가 로봇 위치/방향을 갱신한 뒤 시선을 읽는다.
     [DefaultExecutionOrder(200)]
     [DisallowMultipleComponent]
@@ -66,6 +75,27 @@ namespace MetaMarine.VR
         double nextHello;
 
         bool paused;
+
+        MonoBehaviour gazeOverrideOwner;
+        IJetbotGazeOverride gazeOverrideSource;
+
+        // 같은 jetbot에 붙은 명시적인 시험 컴포넌트만 시선을 대체할 수 있다.
+        public void RegisterGazeOverride(MonoBehaviour source)
+        {
+            if (source == null || source.gameObject != gameObject ||
+                !(source is IJetbotGazeOverride gazeSource))
+                throw new ArgumentException("같은 jetbot의 시선 입력 컴포넌트가 필요합니다.");
+            gazeOverrideOwner = source;
+            gazeOverrideSource = gazeSource;
+        }
+
+        public void UnregisterGazeOverride(MonoBehaviour source)
+        {
+            if (gazeOverrideOwner != source)
+                return;
+            gazeOverrideOwner = null;
+            gazeOverrideSource = null;
+        }
 
         readonly byte[] receiveBuffer = new byte[1201];
         readonly Packet packet = new Packet();
@@ -288,6 +318,23 @@ namespace MetaMarine.VR
             if (!active)
             {
                 gazeStatus = "시뮬레이션 일시정지 또는 비활성";
+                return;
+            }
+
+            // 더미 입력은 실제 HMD 추적과 분리한다. 유효한 더미 방향도 같은 JSON/송신을 사용한다.
+            // 초기 대기 중에는 무효 시선을 보내고, 비활성화/제거하면 아래 원래 HMD 경로를 사용한다.
+            if (gazeOverrideOwner != null && gazeOverrideOwner.isActiveAndEnabled &&
+                gazeOverrideSource.IsOverrideEnabled)
+            {
+                gazeStatus = gazeOverrideSource.GazeOverrideStatus;
+                if (!gazeOverrideSource.TryGetWorldDirection(out Vector3 dummyDirection))
+                    return;
+
+                g.direction_world = dummyDirection.normalized;
+                g.direction_robot_yaw = IntoRobotYaw(g.direction_world, transform.eulerAngles.y);
+                CalculateAngles(g.direction_robot_yaw,
+                    out g.yaw_deg, out g.pitch_deg, out g.yaw_valid);
+                g.valid = true;
                 return;
             }
 
