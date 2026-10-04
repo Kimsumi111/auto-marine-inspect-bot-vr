@@ -16,6 +16,13 @@ namespace MetaMarine.VR
         public string Transcript { get; private set; } = "말한 내용이 여기에 표시됩니다.";
         public event Action<string> TranscriptReady;
         public bool ExternalMissionUI { get; set; }
+        public bool IsRecording => recording;
+        public bool IsBusy => busy;
+        public bool IsReady => ready;
+        public string Status => status;
+        public string MicrophoneName => device ?? "없음";
+        public float MeterLevel => Mathf.InverseLerp(-60f, -6f, 20f * Mathf.Log10(Mathf.Max(inputPeak, 0.000001f)));
+        public float RecordingSeconds => recording ? Time.realtimeSinceStartup - started : 0f;
         public string StatusSummary => status + " · " + InputLevel + "\n마이크: " + (device ?? "없음");
         private const string Endpoint = "http://127.0.0.1:8766";
         private const int MaxSeconds = 15;
@@ -233,23 +240,6 @@ namespace MetaMarine.VR
             return text;
         }
 
-        private void OnGUI()
-        {
-            if (ExternalMissionUI) return;
-            labelStyle ??= new GUIStyle(GUI.skin.label) { font = font, fontSize = 18, wordWrap = true };
-            var rect = new Rect(20, 100, Mathf.Min(600, Screen.width - 40), 250);
-            GUI.Box(rect, "");
-            GUILayout.BeginArea(new Rect(rect.x + 12, rect.y + 10, rect.width - 24, rect.height - 20));
-            GUILayout.Label("음성 → 텍스트 | " + status, labelStyle);
-            GUILayout.Label("마이크: " + (device ?? "없음"), labelStyle);
-            GUILayout.Label("입력 크기: " + InputLevel, labelStyle);
-            GUILayout.Label(Transcript, labelStyle, GUILayout.MinHeight(80));
-            GUI.enabled = !busy;
-            if (GUILayout.Button(recording ? "Stop / Transcribe (A, F8)" : "Record (A, F8)")) ToggleRecording();
-            GUI.enabled = !busy && !recording;
-            if (GUILayout.Button("Next microphone (X, F7)")) CycleMicrophone();
-            GUI.enabled = true; GUILayout.EndArea();
-        }
 
         private void ReleaseClip() { if (clip != null) Destroy(clip); clip = null; }
         private void OnDisable()

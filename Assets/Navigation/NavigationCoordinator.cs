@@ -148,6 +148,7 @@ namespace ShipRobot.Navigation
         public PlantNodeId CurrentNode { get; private set; }
         public string StatusDetail => statusDetail;
         public event Action<string> InspectionCompleted;
+        public string CurrentInspectionPointName => State == MissionState.InspectingEquipment && activeInspectionPoint != null ? activeInspectionPoint.name : null;
         public bool IsTrainingMission => avoidanceAgent != null && avoidanceAgent.IsTraining;
         public void UseDashboardStart() => autoStartEquipmentAAndBMission = false;
         public void StopFromDashboard()
