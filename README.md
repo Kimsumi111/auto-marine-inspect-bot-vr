@@ -18,6 +18,22 @@
 
 ![MetaMarine 전체 시스템 구성](docs/images/system-overview.png)
 
+### AI Agent 구조
+
+![AI Agent 소프트웨어 구조](docs/images/ai-agent-architecture.png)
+
+AI Agent는 점검 목표와 실행 결과를 바탕으로 다음 작업을 선택합니다. Backend는 도구의 인자와 실행 조건을 검증하고, Unity는 실제 주행 제어를 담당합니다.
+
+| 구성 요소 | 역할 |
+| --- | --- |
+| Mission API · FastAPI | 자연어 요청 접수, 임무 생성, 상태·결과 조회와 취소 |
+| OpenAI Responses API · LangGraph | 점검 대상을 구조화하고 실행·보류, 진단 재시도, 보고를 판단 |
+| Tool Execution Layer | 허용된 도구와 대상·인자를 검증하고 실행 결과·오류를 Agent에 전달 |
+| Mission Monitor · Diagnosis Service | Unity 상태와 지점별 점검 완료를 감시하고 저장 CSV 진단을 실행 |
+| SQLite · Event Log | 임무 상태, 도구 실행·진단 결과와 판단 근거를 저장 |
+
+진단 실패 시 같은 CSV를 최대 1회 재분석하거나 미판정으로 처리합니다. 최종 완료는 Unity 임무 종료와 선택 설비의 모든 점검 지점 진단 성공을 확인한 뒤 결정하며, 사용자 취소·정지는 LLM 응답과 독립적으로 처리합니다.
+
 ### 동작 흐름
 
 **음성·텍스트 요청 → Backend / AI Agent → Unity 순찰·지점별 점검 → 저장 CSV 진단 → VR 결과 보고**
@@ -28,9 +44,16 @@ VR은 Backend REST API를 사용하고, Backend가 Unity TCP 연결과 임무 �
 
 ### 구현 화면
 
-| Unity 설비 순찰 시뮬레이션 | 실물 JetBot 프로토타입 |
-| --- | --- |
-| ![Unity 설비 순찰](docs/images/unity-simulation.png) | ![실물 JetBot](docs/images/jetbot-prototype.png) |
+<table>
+  <tr>
+    <th width="75%">Unity 설비 순찰 시뮬레이션</th>
+    <th width="25%">실물 JetBot 프로토타입</th>
+  </tr>
+  <tr>
+    <td width="75%"><img src="docs/images/unity-simulation.png" alt="Unity 설비 순찰 시뮬레이션" width="720"></td>
+    <td width="25%"><img src="docs/images/jetbot-prototype.png" alt="실물 JetBot 프로토타입" width="240"></td>
+  </tr>
+</table>
 
 | VR 사용자 환경 | VR 진단 대시보드 |
 | --- | --- |
