@@ -1,8 +1,8 @@
 # auto-marine-inspect-bot-vr
 
-## MetaMarine — 메타마린
+## 제조현장·선박 회전 설비 점검을 위한 VR 연계 Physical AI Agent
 
-**제조현장·선박 회전 설비 점검을 위한 VR 연계 Physical AI Agent**
+**팀 MetaMarine(메타마린)**
 
 반복적인 설비 순찰과 위험구역 접근 부담을 줄이기 위해, 자연어 점검 요청부터 Unity 주행·진단·결과 보고까지 연결하는 프로젝트입니다. 사용자는 VR에서 로봇 시점으로 현장을 확인하고 음성으로 점검을 요청하며, 진행 상황과 진단 결과를 대시보드에서 확인합니다.
 
