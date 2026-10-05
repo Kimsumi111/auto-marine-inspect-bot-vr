@@ -51,7 +51,7 @@ VR은 Backend REST API를 사용하고, Backend가 Unity TCP 연결과 임무 �
   </tr>
   <tr>
     <td width="60%"><img src="docs/images/unity-simulation.png" alt="Unity 설비 순찰 시뮬레이션" width="576"></td>
-    <td width="40%"><img src="docs/images/jetbot-prototype.png" alt="실물 JetBot 프로토타입" width="384"></td>
+    <td width="40%"><img src="docs/images/jetbot-prototype-updated.png" alt="실물 JetBot 프로토타입" width="384"></td>
   </tr>
 </table>
 
