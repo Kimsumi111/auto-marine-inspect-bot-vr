@@ -55,9 +55,16 @@ VR은 Backend REST API를 사용하고, Backend가 Unity TCP 연결과 임무 �
   </tr>
 </table>
 
-| VR 사용자 환경 | VR 진단 대시보드 |
-| --- | --- |
-| ![Quest를 이용한 VR 조작](docs/images/vr-user.png) | ![설비별 진단 그래프와 결과](docs/images/vr-dashboard.png) |
+<table>
+  <tr>
+    <th width="50%">VR 사용자 환경</th>
+    <th width="50%">VR 진단 대시보드</th>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/images/vr-user.png" alt="Quest를 이용한 VR 조작" width="480"></td>
+    <td width="50%"><img src="docs/images/vr-dashboard.png" alt="설비별 진단 그래프와 결과" width="480"></td>
+  </tr>
+</table>
 
 ### 기술 스택
 
